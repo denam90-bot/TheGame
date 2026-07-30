@@ -17,6 +17,7 @@ _2D top-down ARPG (Diablo/PoE-like), single file: `game.html`._
 - [ ] **Hidden rooms** — secret rooms with extra loot to discover
 
 ## Done
+- [x] **Scrollable backpack** — inventory now pages through all items (▲/▼ buttons + mouse wheel), with "X–Y of N" indicator and scrollbar. Fixes not being able to see past ~9 items.
 - [x] **Difficulty pass** — mobs hit harder & have more HP (steeper per-level scaling); bosses tougher; HP regen SUPPRESSED for 2.5s after taking damage (no free healing mid-fight). Mana regen unchanged.
 - [x] **Bigger, touch-friendly inventory** — full two-column panel, large rows, explicit ✕ close button (fixes "character frozen" confusion: game pauses while inventory/settings open; now easy to close on phone).
 - [x] **Mobile / touch support** — responsive canvas scaling; virtual joystick (left thumb) for movement; on-screen buttons for attack/spells/potions/inventory/settings; auto-aim at nearest enemy; "rotate to landscape" hint. Desktop controls unchanged.

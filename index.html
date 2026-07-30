@@ -195,7 +195,7 @@ window.addEventListener('keydown', e => {
   if (e.key === ' ') { e.preventDefault(); tryAttack(); }
   if (game.over && k === 'r') { fullReset(); return; }        // restart on death
   if (k === 'c' && game.over) { game.menu = true; return; }   // back to class select
-  if (k === binds.inventory) showInv = !showInv;
+  if (k === binds.inventory) { showInv = !showInv; if (showInv) invScroll = 0; }
   if (k === binds.health) drinkHealth();
   if (k === binds.mana) drinkMana();
   const si = spellIndexForKey(k);
@@ -224,6 +224,8 @@ canvas.addEventListener('mousedown', e => {
   tryAttack();
 });
 canvas.addEventListener('mouseup', e => { if (e.button === 2) mouse.rightDown = false; else mouse.leftDown = false; });
+// Mouse wheel scrolls the backpack when the inventory is open
+canvas.addEventListener('wheel', e => { if (!showInv) return; e.preventDefault(); invScroll += (e.deltaY > 0 ? 2 : -2); }, { passive: false });
 
 // --------------------------------------------------------------------
 //  TOUCH CONTROLS (phones/tablets) — virtual joystick + on-screen buttons
@@ -281,7 +283,7 @@ if (isTouch) {
         if (hit === 'attack') touchAttack = true;
         else if (hit === 'potionH') drinkHealth();
         else if (hit === 'potionM') drinkMana();
-        else if (hit === 'inv') showInv = !showInv;
+        else if (hit === 'inv') { showInv = !showInv; if (showInv) invScroll = 0; }
         else if (hit === 'settings') { settingsOpen = true; awaitingBind = null; }
         else if (hit.startsWith('spell')) castSpell(+hit.slice(5));
         continue;
@@ -812,6 +814,7 @@ function update() {
 //  DRAW
 // --------------------------------------------------------------------
 const invPanel = { x: 0, y: 0, w: 0, h: 0 };
+let invScroll = 0, invMaxRows = 1;
 function drawBar(x, y, w, h, frac, color) { ctx.fillStyle = '#000'; ctx.fillRect(x, y, w, h); ctx.fillStyle = color; ctx.fillRect(x, y, w * clamp(frac, 0, 1), h); }
 function drawGem(x, y, color, size) {
   ctx.save(); ctx.translate(x, y); ctx.rotate(Math.PI / 4);
@@ -1104,13 +1107,41 @@ function drawInventory() {
   let yy = top + 14;
   for (const slot of SLOTS) { drawRow(leftX, yy, player.equipped[slot], slot, 'slot', slot); yy += rowH; }
 
-  // Backpack (right column)
-  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 15px sans-serif'; ctx.fillText(`Backpack (${player.inventory.length})`, rightX, top);
+  // Backpack (right column) — scrollable (newest first)
+  const fullList = player.inventory.slice().reverse();
+  const total = fullList.length;
   let by = top + 14;
-  if (player.inventory.length === 0) { ctx.fillStyle = '#7f8794'; ctx.font = '13px sans-serif'; ctx.fillText('Empty — go kill things.', rightX + 4, by + 16); }
-  const maxRows = Math.floor((py + ph - by - 12) / rowH);
-  const list = player.inventory.slice(-maxRows).reverse();
-  for (const it of list) { drawRow(rightX, by, it, null, 'bag', it); by += rowH; }
+  const maxRows = Math.max(1, Math.floor((py + ph - by - 20) / rowH));
+  invMaxRows = maxRows;
+  const maxScroll = Math.max(0, total - maxRows);
+  invScroll = clamp(invScroll, 0, maxScroll);
+  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 15px sans-serif'; ctx.fillText(`Backpack (${total})`, rightX, top);
+
+  if (total > maxRows) {
+    const suBtn = { x: rightX + colW - 76, y: top - 18, w: 34, h: 24, kind: 'scrollUp' };
+    const sdBtn = { x: rightX + colW - 38, y: top - 18, w: 34, h: 24, kind: 'scrollDown' };
+    for (const b of [suBtn, sdBtn]) {
+      invRects.push(b);
+      ctx.fillStyle = '#171a21'; ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.strokeStyle = '#3a4150'; ctx.lineWidth = 1; ctx.strokeRect(b.x, b.y, b.w, b.h);
+      ctx.fillStyle = '#cfd4dc'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(b.kind === 'scrollUp' ? '▲' : '▼', b.x + b.w / 2, b.y + 17); ctx.textAlign = 'left';
+    }
+  }
+  if (total === 0) { ctx.fillStyle = '#7f8794'; ctx.font = '13px sans-serif'; ctx.fillText('Empty — go kill things.', rightX + 4, by + 16); }
+
+  const visible = fullList.slice(invScroll, invScroll + maxRows);
+  for (const it of visible) { drawRow(rightX, by, it, null, 'bag', it); by += rowH; }
+
+  if (total > maxRows) {
+    ctx.fillStyle = '#6b7280'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText(`${invScroll + 1}–${invScroll + visible.length} of ${total}  ·  scroll ▲▼ / wheel`, rightX + colW, py + ph - 8); ctx.textAlign = 'left';
+    const trX = rightX + colW - 4, trY = top + 14, trH = maxRows * rowH - 8;
+    ctx.fillStyle = '#23272f'; ctx.fillRect(trX, trY, 4, trH);
+    const thumbH = Math.max(18, trH * (maxRows / total));
+    const thumbY = trY + (trH - thumbH) * (maxScroll ? invScroll / maxScroll : 0);
+    ctx.fillStyle = '#4a90d9'; ctx.fillRect(trX, thumbY, 4, thumbH);
+  }
 }
 
 function statLabel(stat, val) {
@@ -1130,6 +1161,8 @@ function handleInventoryClick() {
       if (r.kind === 'close') showInv = false;
       else if (r.kind === 'bag') equipItem(r.ref);
       else if (r.kind === 'slot') unequipSlot(r.ref);
+      else if (r.kind === 'scrollUp') invScroll -= Math.max(1, invMaxRows - 1);
+      else if (r.kind === 'scrollDown') invScroll += Math.max(1, invMaxRows - 1);
       return true;
     }
   }
