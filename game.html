@@ -329,7 +329,7 @@ const game = { menu: true, over: false, cleared: false, time: 0, kills: 0, level
 const BASE = { hp: 100, mana: 100, speed: 3.2, punch: 16 };
 const player = {
   x: W / 2, y: H / 2, radius: 16, facing: 0,
-  hp: 100, maxHp: 100, hpRegen: 0, hitFlash: 0, healFlash: 0, manaFlash: 0,
+  hp: 100, maxHp: 100, hpRegen: 0, hitFlash: 0, healFlash: 0, manaFlash: 0, combatT: 0,
   mana: 100, maxMana: 100, manaRegen: 0.12,
   speed: BASE.speed, potions: 1, manaPotions: 1,
   class: null, spellPower: 0, spells: [],
@@ -648,14 +648,14 @@ function makeGrunt() {
   do { x = ROOM.left + 20 + Math.random() * (ROOM.right - ROOM.left - 40);
        y = ROOM.top + 20 + Math.random() * (ROOM.bottom - ROOM.top - 40); tries++;
   } while (Math.hypot(x - player.x, y - player.y) < 170 && tries < 30);
-  const hp = 55 + game.level * 15;
-  return { x, y, radius: 15, hp, maxHp: hp, speed: Math.min(2.6, 1.0 + Math.random() * 0.6 + game.level * 0.03),
-           dead: false, hitFlash: 0, touchCd: 0, slowT: 0, damage: 6 + Math.round(game.level * 1.3), spawnFx: 12, boss: false };
+  const hp = 70 + game.level * 24;
+  return { x, y, radius: 15, hp, maxHp: hp, speed: Math.min(2.9, 1.1 + Math.random() * 0.6 + game.level * 0.04),
+           dead: false, hitFlash: 0, touchCd: 0, slowT: 0, damage: 10 + Math.round(game.level * 2.4), spawnFx: 12, boss: false };
 }
 function makeBoss() {
-  const hp = 480 + game.level * 120;
-  return { x: W / 2, y: ROOM.top + 70, radius: 34, hp, maxHp: hp, speed: 0.8 + game.level * 0.02,
-           dead: false, hitFlash: 0, touchCd: 0, slowT: 0, damage: 14 + game.level * 2, spawnFx: 18, boss: true };
+  const hp = 620 + game.level * 165;
+  return { x: W / 2, y: ROOM.top + 70, radius: 34, hp, maxHp: hp, speed: 0.9 + game.level * 0.025,
+           dead: false, hitFlash: 0, touchCd: 0, slowT: 0, damage: 20 + Math.round(game.level * 3.2), spawnFx: 18, boss: true };
 }
 function setupLevel() {
   enemies = []; groundLoot = []; groundPotions = []; groundTomes = []; projectiles = []; meteors = []; fx = [];
@@ -691,7 +691,7 @@ function makeStarterWeapon(wkey) {
 function startRun(cls) {
   player.class = cls;
   game.menu = false; game.over = false; game.level = 1; game.kills = 0;
-  player.hitFlash = 0; player.healFlash = 0; player.manaFlash = 0; player.potions = 1; player.manaPotions = 1;
+  player.hitFlash = 0; player.healFlash = 0; player.manaFlash = 0; player.combatT = 0; player.potions = 1; player.manaPotions = 1;
   player.inventory = [];
   player.equipped = { Weapon: null, 'Off-hand': null, Helm: null, Amulet: null, Ring1: null, Ring2: null, Boots: null };
   if (cls.startWeapon) player.equipped.Weapon = makeStarterWeapon(cls.startWeapon);
@@ -739,8 +739,9 @@ function update() {
   // Auto-attack while holding left mouse (or the touch attack button)
   if (mouse.leftDown || touchAttack) tryAttack();
 
-  // Resources / timers
-  player.hp = Math.min(player.maxHp, player.hp + player.hpRegen);
+  // Resources / timers — HP regen is SUPPRESSED for 2.5s after taking damage (no healing mid-fight)
+  if (player.combatT > 0) player.combatT--;
+  if (player.combatT <= 0) player.hp = Math.min(player.maxHp, player.hp + player.hpRegen);
   player.mana = Math.min(player.maxMana, player.mana + player.manaRegen);
   for (const s of player.spells) if (s.cd > 0) s.cd--;
   if (attack.cooldown > 0) attack.cooldown--;
@@ -786,7 +787,7 @@ function update() {
     e.x += (dx / dist) * spd; e.y += (dy / dist) * spd; confine(e);
     if (dist < e.radius + player.radius && e.touchCd <= 0) {
       const dmg = Math.max(1, Math.round(e.damage * (50 / (50 + player.stats.armor))));
-      player.hp -= dmg; player.hitFlash = 8; e.touchCd = e.boss ? 55 : 40;
+      player.hp -= dmg; player.hitFlash = 8; player.combatT = 150; e.touchCd = e.boss ? 55 : 40;
       if (player.hp <= 0) { player.hp = 0; game.over = true; }
     }
   }

@@ -4,6 +4,7 @@ _Running list of what to build next. Add anything anytime; check items off as th
 _2D top-down ARPG (Diablo/PoE-like), single file: `game.html`._
 
 ## Up next (priority order)
+- [ ] **Cap health potions** — limit how many health potions you can carry/pick up (e.g. a max stack); extra pickups wasted or converted. Reins in sustain.
 - [ ] **Upgrade / combine items** — combine 3 items of the same rarity (e.g. 3 Rare) into 1 item of the next rarity up, with randomly rolled stats. A crafting/gambling sink for duplicate loot.
 - [ ] **Rune reroll currency** — from PoE: a currency/item that rerolls an item's stats (or a room's rewards) so you can chase better rolls instead of accepting bad ones. (Harvested from the "Rune reroll currency" chat.)
 
@@ -16,6 +17,7 @@ _2D top-down ARPG (Diablo/PoE-like), single file: `game.html`._
 - [ ] **Hidden rooms** — secret rooms with extra loot to discover
 
 ## Done
+- [x] **Difficulty pass** — mobs hit harder & have more HP (steeper per-level scaling); bosses tougher; HP regen SUPPRESSED for 2.5s after taking damage (no free healing mid-fight). Mana regen unchanged.
 - [x] **Bigger, touch-friendly inventory** — full two-column panel, large rows, explicit ✕ close button (fixes "character frozen" confusion: game pauses while inventory/settings open; now easy to close on phone).
 - [x] **Mobile / touch support** — responsive canvas scaling; virtual joystick (left thumb) for movement; on-screen buttons for attack/spells/potions/inventory/settings; auto-aim at nearest enemy; "rotate to landscape" hint. Desktop controls unchanged.
 - [x] **Critical strike** — Crit chance + Crit damage stats (base 5% / 150%); rolls as affix on weapons & jewelry; applies to weapon attacks AND spells; gold floating damage numbers on crit.
