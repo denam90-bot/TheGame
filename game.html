@@ -158,6 +158,10 @@ const BIND_ROWS = [
 function saveBinds() { try { localStorage.setItem('thegame_binds', JSON.stringify(binds)); } catch (e) {} }
 function loadBinds() { try { const s = localStorage.getItem('thegame_binds'); if (s) Object.assign(binds, JSON.parse(s)); } catch (e) {} }
 loadBinds();
+// Touch movement mode: 'joystick' (floating, spawns wherever you touch) or 'tap' (tap-to-move).
+let touchMoveMode = 'joystick';
+function saveTouchMode() { try { localStorage.setItem('thegame_touchmode', touchMoveMode); } catch (e) {} }
+(function () { try { const s = localStorage.getItem('thegame_touchmode'); if (s === 'joystick' || s === 'tap') touchMoveMode = s; } catch (e) {} })();
 function spellKey(i) { return binds['spell' + i]; }
 function spellIndexForKey(k) { for (let i = 0; i < 4; i++) if (binds['spell' + i] === k) return i; return -1; }
 function keyDisplay(k) {
@@ -173,6 +177,7 @@ function handleSettingsClick() {
   for (const r of settingsRects) {
     if (mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h) {
       if (r.id === '__reset') { binds = defaultBinds(); awaitingBind = null; saveBinds(); }
+      else if (r.id === '__touchmode') { touchMoveMode = (touchMoveMode === 'joystick' ? 'tap' : 'joystick'); saveTouchMode(); joyId = null; touchMove.active = false; touchMove.x = 0; touchMove.y = 0; }
       else awaitingBind = (awaitingBind === r.id ? null : r.id);
       return;
     }
@@ -267,7 +272,7 @@ if (isTouch) {
       if (game.menu) { mouse.x = p.x; mouse.y = p.y; handleMenuClick(); continue; }
       if (game.over) { fullReset(); continue; }
       if (settingsOpen) {
-        const pw = 380, ph = 372, px = (W - pw) / 2, py = (H - ph) / 2;
+        const pw = 380, ph = 424, px = (W - pw) / 2, py = (H - ph) / 2;
         mouse.x = p.x; mouse.y = p.y;
         if (p.x >= px && p.x <= px + pw && p.y >= py && p.y <= py + ph) handleSettingsClick();
         else settingsOpen = false;
@@ -288,7 +293,10 @@ if (isTouch) {
         else if (hit.startsWith('spell')) castSpell(+hit.slice(5));
         continue;
       }
-      if (joyId === null && p.x < W * 0.5) {
+      // Not on a button: either spawn a floating joystick here, or tap-to-move.
+      if (touchMoveMode === 'tap') {
+        moveTarget = { x: p.x, y: p.y }; touchRoles[t.identifier] = 'tap';
+      } else if (joyId === null) {
         joyId = t.identifier; joyOrigin = { x: p.x, y: p.y }; joyKnob = { x: p.x, y: p.y };
         touchMove.active = true; touchMove.x = 0; touchMove.y = 0; touchRoles[t.identifier] = 'joy';
       }
@@ -304,6 +312,8 @@ if (isTouch) {
         if (d > R) { dx = dx / d * R; dy = dy / d * R; }
         joyKnob = { x: joyOrigin.x + dx, y: joyOrigin.y + dy };
         touchMove.x = dx / R; touchMove.y = dy / R;
+      } else if (touchRoles[t.identifier] === 'tap') {
+        const p = canvasPos(t.clientX, t.clientY); moveTarget = { x: p.x, y: p.y }; // drag to keep steering
       }
     }
   }, { passive: false });
@@ -991,7 +1001,7 @@ function drawTouchUI() {
 function drawSettings() {
   settingsRects = [];
   ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(0, 0, W, H);
-  const pw = 380, ph = 372, px = (W - pw) / 2, py = (H - ph) / 2;
+  const pw = 380, ph = isTouch ? 424 : 372, px = (W - pw) / 2, py = (H - ph) / 2;
   ctx.fillStyle = 'rgba(12,14,20,.98)'; ctx.fillRect(px, py, pw, ph);
   ctx.strokeStyle = '#3a4150'; ctx.lineWidth = 2; ctx.strokeRect(px, py, pw, ph);
   ctx.textAlign = 'left';
@@ -1014,6 +1024,18 @@ function drawSettings() {
     ctx.fillText(waiting ? 'press a key…' : keyDisplay(binds[row.id]), rx + rw - 12, yy - 1); ctx.textAlign = 'left';
     yy += 36;
   });
+  // Touch-only: movement mode toggle (floating joystick vs tap-to-move)
+  if (isTouch) {
+    const rx = px + 16, rw = pw - 32, rh = 34, ry = yy - 20;
+    const hov = mouse.x >= rx && mouse.x <= rx + rw && mouse.y >= ry && mouse.y <= ry + rh;
+    settingsRects.push({ x: rx, y: ry, w: rw, h: rh, id: '__touchmode' });
+    ctx.fillStyle = hov ? '#20242e' : '#171a21'; ctx.fillRect(rx, ry, rw, rh);
+    ctx.strokeStyle = '#3a4150'; ctx.lineWidth = 1; ctx.strokeRect(rx, ry, rw, rh);
+    ctx.fillStyle = '#cfd4dc'; ctx.font = '13px sans-serif'; ctx.fillText('Movement (tap to switch)', rx + 12, ry + 21);
+    ctx.fillStyle = '#9fd0ff'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText(touchMoveMode === 'joystick' ? 'Joystick' : 'Tap-to-move', rx + rw - 12, ry + 21); ctx.textAlign = 'left';
+    yy += 44;
+  }
   const bxr = px + 16, bwr = pw - 32, bhr = 30, byr = yy - 12;
   const bhover = mouse.x >= bxr && mouse.x <= bxr + bwr && mouse.y >= byr && mouse.y <= byr + bhr;
   settingsRects.push({ x: bxr, y: byr, w: bwr, h: bhr, id: '__reset' });
