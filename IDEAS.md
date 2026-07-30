@@ -3,18 +3,20 @@
 _Running list of what to build next. Add anything anytime; check items off as they ship._
 _2D top-down ARPG (Diablo/PoE-like), single file: `game.html`._
 
-## Up next (priority order)
+## Up next — HIGH priority (in order)
 - [ ] **Cap health potions** — limit how many health potions you can carry/pick up (e.g. a max stack); extra pickups wasted or converted. Reins in sustain.
 - [ ] **Upgrade / combine items** — combine 3 items of the same rarity (e.g. 3 Rare) into 1 item of the next rarity up, with randomly rolled stats. A crafting/gambling sink for duplicate loot.
+- [ ] **Puzzle for legendary item** — a complex puzzle players must solve to earn a legendary
+- [ ] **Hidden rooms** — secret rooms with extra loot to discover
+
+## MEDIUM priority
 - [ ] **Rune reroll currency** — from PoE: a currency/item that rerolls an item's stats (or a room's rewards) so you can chase better rolls instead of accepting bad ones. (Harvested from the "Rune reroll currency" chat.)
 
-## Backlog (unordered)
+## Backlog (unordered / low)
 - [ ] More character classes (currently 3: Warrior/Hunter/Mage)
 - [ ] More spells
 - [ ] Custom art / sprites (currently simple shapes)
 - [ ] Wrap into desktop app (Tauri/Electron)
-- [ ] **Puzzle for legendary item** — a complex puzzle players must solve to earn a legendary
-- [ ] **Hidden rooms** — secret rooms with extra loot to discover
 
 ## Done
 - [x] **Free-placement touch movement** — floating joystick spawns wherever you touch (no longer locked to the left half); action buttons still take priority. Settings has a Joystick ↔ Tap-to-move toggle, saved across sessions.
