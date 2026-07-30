@@ -4,8 +4,6 @@ _Running list of what to build next. Add anything anytime; check items off as th
 _2D top-down ARPG (Diablo/PoE-like), single file: `game.html`._
 
 ## Up next — HIGH priority (in order)
-- [ ] **Cap health potions** — limit how many health potions you can carry/pick up (e.g. a max stack); extra pickups wasted or converted. Reins in sustain.
-- [ ] **Upgrade / combine items** — combine 3 items of the same rarity (e.g. 3 Rare) into 1 item of the next rarity up, with randomly rolled stats. A crafting/gambling sink for duplicate loot.
 - [ ] **Puzzle for legendary item** — a complex puzzle players must solve to earn a legendary
 - [ ] **Hidden rooms** — secret rooms with extra loot to discover
 
@@ -19,6 +17,8 @@ _2D top-down ARPG (Diablo/PoE-like), single file: `game.html`._
 - [ ] Wrap into desktop app (Tauri/Electron)
 
 ## Done
+- [x] **Forge (merge items)** — new ⚒ Forge screen (opened from the inventory): stage 3 items of the same rarity into 3 slots, press FORGE, get 1 item of the next rarity up with freshly rolled stats. Result keeps the type of one consumed item. Rarity locks after the first pick; Legendary can't be an input; closing returns staged items. Scrollable list, works on touch + desktop.
+- [x] **Cap health potions** — health and mana potions capped at 5 each; when full, flasks stay on the ground (with a toast) instead of being wasted. HUD shows `x/5`.
 - [x] **Free-placement touch movement** — floating joystick spawns wherever you touch (no longer locked to the left half); action buttons still take priority. Settings has a Joystick ↔ Tap-to-move toggle, saved across sessions.
 - [x] **Scrollable backpack** — inventory now pages through all items (▲/▼ buttons + mouse wheel), with "X–Y of N" indicator and scrollbar. Fixes not being able to see past ~9 items.
 - [x] **Difficulty pass** — mobs hit harder & have more HP (steeper per-level scaling); bosses tougher; HP regen SUPPRESSED for 2.5s after taking damage (no free healing mid-fight). Mana regen unchanged.

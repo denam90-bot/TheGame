@@ -113,8 +113,11 @@ function critAffix(rarIdx) {
 }
 function makeItem(minIdx = 0) {
   const rar = rollRarity(minIdx);
+  return buildItem(rar, ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)]);
+}
+// Builds an item of an EXACT rarity and type (used by loot rolls and the Forge).
+function buildItem(rar, t) {
   const rarIdx = RARITIES.indexOf(rar);
-  const t = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
   const scale = 3 + Math.floor(Math.random() * 6) + Math.floor(game.level * 0.8);
   const item = { name: `${rar.name} ${t.type}`, rarity: rar, slot: t.slot };
   if (t.weapon) {
@@ -195,6 +198,7 @@ window.addEventListener('keydown', e => {
     if (k === 'escape') settingsOpen = false;
     return;
   }
+  if (mergeOpen) { if (k === 'escape' || k === binds.inventory) closeMerge(); return; }
   if (k === 'escape' && !game.menu) { settingsOpen = true; awaitingBind = null; return; }
 
   if (e.key === ' ') { e.preventDefault(); tryAttack(); }
@@ -217,6 +221,7 @@ canvas.addEventListener('mousemove', e => { const p = canvasPos(e.clientX, e.cli
 canvas.addEventListener('mousedown', e => {
   if (game.menu) { if (e.button === 0) handleMenuClick(); return; }
   if (settingsOpen) { if (e.button === 0) handleSettingsClick(); return; }
+  if (mergeOpen) { if (e.button === 0 && !handleMergeClick()) closeMerge(); return; }
   if (e.button === 2) { // right = move
     mouse.rightDown = true;
     if (!game.over && !showInv) moveTarget = { x: mouse.x, y: mouse.y };
@@ -230,7 +235,10 @@ canvas.addEventListener('mousedown', e => {
 });
 canvas.addEventListener('mouseup', e => { if (e.button === 2) mouse.rightDown = false; else mouse.leftDown = false; });
 // Mouse wheel scrolls the backpack when the inventory is open
-canvas.addEventListener('wheel', e => { if (!showInv) return; e.preventDefault(); invScroll += (e.deltaY > 0 ? 2 : -2); }, { passive: false });
+canvas.addEventListener('wheel', e => {
+  if (mergeOpen) { e.preventDefault(); mergeScroll += (e.deltaY > 0 ? 2 : -2); return; }
+  if (!showInv) return; e.preventDefault(); invScroll += (e.deltaY > 0 ? 2 : -2);
+}, { passive: false });
 
 // --------------------------------------------------------------------
 //  TOUCH CONTROLS (phones/tablets) — virtual joystick + on-screen buttons
@@ -278,6 +286,7 @@ if (isTouch) {
         else settingsOpen = false;
         continue;
       }
+      if (mergeOpen) { mouse.x = p.x; mouse.y = p.y; if (!handleMergeClick()) closeMerge(); continue; }
       if (showInv) { mouse.x = p.x; mouse.y = p.y; if (!handleInventoryClick()) showInv = false; continue; }
       // Gameplay: buttons first, then joystick on the left half.
       let hit = null;
@@ -352,6 +361,7 @@ const player = {
   stats: { attackDamage: BASE.punch, armor: 0, attacksPerSec: 2.7, critChance: 0.05, critDamage: 1.5 },
 };
 const POTION_HEAL = 45, POTION_MANA = 55;
+const POTION_CAP = 5, MANA_POTION_CAP = 5; // max you can carry — extras stay on the ground
 
 function recomputeStats() {
   // gather attributes + flat bonuses from gear
@@ -703,6 +713,7 @@ function makeStarterWeapon(wkey) {
 function startRun(cls) {
   player.class = cls;
   game.menu = false; game.over = false; game.level = 1; game.kills = 0;
+  mergeOpen = false; mergeSlots = [null, null, null]; mergeScroll = 0; mergeMsg = null; showInv = false; invScroll = 0;
   player.hitFlash = 0; player.healFlash = 0; player.manaFlash = 0; player.combatT = 0; player.potions = 1; player.manaPotions = 1;
   player.inventory = [];
   player.equipped = { Weapon: null, 'Off-hand': null, Helm: null, Amulet: null, Ring1: null, Ring2: null, Boots: null };
@@ -717,7 +728,7 @@ function fullReset() { startRun(player.class || CLASSES[0]); }
 //  UPDATE
 // --------------------------------------------------------------------
 function update() {
-  if (game.menu || game.over || showInv || settingsOpen) return;
+  if (game.menu || game.over || showInv || settingsOpen || mergeOpen) return;
   game.time++;
 
   // Movement: arrow keys override right-click move (WASD is free; W etc are spells)
@@ -812,7 +823,16 @@ function update() {
 
   // Pickups
   groundLoot = groundLoot.filter(g => { if (Math.hypot(g.x - player.x, g.y - player.y) < player.radius + 12) { player.inventory.push(g.item); return false; } return true; });
-  groundPotions = groundPotions.filter(p => { if (Math.hypot(p.x - player.x, p.y - player.y) < player.radius + 12) { if (p.type === 'mana') player.manaPotions++; else player.potions++; return false; } return true; });
+  // Potions are capped — when full, the flask stays on the ground instead of vanishing.
+  groundPotions = groundPotions.filter(p => {
+    if (Math.hypot(p.x - player.x, p.y - player.y) >= player.radius + 12) return true;
+    if (p.type === 'mana') {
+      if (player.manaPotions >= MANA_POTION_CAP) { if (!p.warned) { p.warned = 1; fx.push({ kind: 'toast', text: `Mana potions full (${MANA_POTION_CAP})`, life: 90, maxLife: 90 }); } return true; }
+      player.manaPotions++; return false;
+    }
+    if (player.potions >= POTION_CAP) { if (!p.warned) { p.warned = 1; fx.push({ kind: 'toast', text: `Health potions full (${POTION_CAP})`, life: 90, maxLife: 90 }); } return true; }
+    player.potions++; return false;
+  });
   groundTomes = groundTomes.filter(tm => { if (Math.hypot(tm.x - player.x, tm.y - player.y) < player.radius + 14) { grantSpell(); return false; } return true; });
 
   // Door / progression — clearing the room drops one guaranteed spell tome by the exit
@@ -825,6 +845,41 @@ function update() {
 // --------------------------------------------------------------------
 const invPanel = { x: 0, y: 0, w: 0, h: 0 };
 let invScroll = 0, invMaxRows = 1;
+
+// --------------------------------------------------------------------
+//  FORGE / MERGE — combine 3 items of the same rarity into 1 of the next tier
+// --------------------------------------------------------------------
+let mergeOpen = false, mergeSlots = [null, null, null], mergeRects = [], mergeScroll = 0, mergeMaxRows = 1, mergeMsg = null, mergeMsgT = 0;
+const mergePanel = { x: 0, y: 0, w: 0, h: 0 };
+function openMerge() { mergeOpen = true; showInv = false; mergeSlots = [null, null, null]; mergeScroll = 0; mergeMsg = null; }
+function closeMerge() { returnMergeItems(); mergeOpen = false; }
+function returnMergeItems() { for (let i = 0; i < 3; i++) { if (mergeSlots[i]) { player.inventory.push(mergeSlots[i]); mergeSlots[i] = null; } } }
+function mergeLockedRarity() { const f = mergeSlots.find(s => s); return f ? f.rarity : null; }
+function mergeCount() { return mergeSlots.filter(s => s).length; }
+function canForge() { const r = mergeLockedRarity(); return mergeCount() === 3 && r && RARITIES.indexOf(r) < RARITIES.length - 1; }
+function addToMerge(it) {
+  const locked = mergeLockedRarity();
+  if (locked && it.rarity !== locked) { mergeMsg = 'All 3 items must be the same rarity'; mergeMsgT = 120; return; }
+  if (RARITIES.indexOf(it.rarity) >= RARITIES.length - 1) { mergeMsg = 'Legendary is already the highest rarity'; mergeMsgT = 120; return; }
+  const slot = mergeSlots.findIndex(s => !s);
+  if (slot === -1) { mergeMsg = 'All 3 slots are full — tap FORGE'; mergeMsgT = 120; return; }
+  const idx = player.inventory.indexOf(it); if (idx === -1) return;
+  player.inventory.splice(idx, 1); mergeSlots[slot] = it; mergeMsg = null;
+}
+function removeFromMerge(i) { if (mergeSlots[i]) { player.inventory.push(mergeSlots[i]); mergeSlots[i] = null; mergeMsg = null; } }
+function doForge() {
+  if (!canForge()) return;
+  const rarIdx = RARITIES.indexOf(mergeLockedRarity());
+  const newRar = RARITIES[rarIdx + 1];
+  // Result keeps one of the consumed items' types (picked at random), with fresh random stats.
+  const pick = mergeSlots[Math.floor(Math.random() * 3)];
+  const t = ITEM_TYPES.find(x => x.type === pick.name.split(' ').slice(1).join(' ')) || ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
+  const out = buildItem(newRar, t);
+  mergeSlots = [null, null, null];
+  player.inventory.push(out);
+  mergeMsg = `Forged: ${out.name}!`; mergeMsgT = 180;
+  fx.push({ kind: 'toast', text: `Forged ${newRar.name}: ${out.name}`, life: 150, maxLife: 150 });
+}
 function drawBar(x, y, w, h, frac, color) { ctx.fillStyle = '#000'; ctx.fillRect(x, y, w, h); ctx.fillStyle = color; ctx.fillRect(x, y, w * clamp(frac, 0, 1), h); }
 function drawGem(x, y, color, size) {
   ctx.save(); ctx.translate(x, y); ctx.rotate(Math.PI / 4);
@@ -947,6 +1002,7 @@ function draw() {
     ctx.fillStyle = '#8be08b'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('Room cleared — grab the ✦ spell tome & loot, then take the door →', W/2, ROOM.top + 28); ctx.textAlign = 'start';
   }
   if (showInv) drawInventory();
+  if (mergeOpen) drawMerge();
   if (game.over) {
     ctx.fillStyle = 'rgba(0,0,0,.68)'; ctx.fillRect(0, 0, W, H); ctx.textAlign = 'center';
     ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('You died', W/2, H/2 - 14);
@@ -954,7 +1010,7 @@ function draw() {
     ctx.fillText('Press R or click to restart · C to change class', W/2, H/2 + 44); ctx.textAlign = 'start';
   }
   if (settingsOpen) drawSettings();
-  if (isTouch && !game.menu && !game.over && !showInv && !settingsOpen) drawTouchUI();
+  if (isTouch && !game.menu && !game.over && !showInv && !settingsOpen && !mergeOpen) drawTouchUI();
   if (isTouch && window.innerHeight > window.innerWidth) {
     ctx.fillStyle = 'rgba(0,0,0,.82)'; ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = '#e8eef6'; ctx.textAlign = 'center'; ctx.font = 'bold 24px sans-serif';
@@ -980,8 +1036,8 @@ function drawTouchUI() {
     ctx.textAlign = 'start';
   }
   roundBtn(835, 466, 46, '⚔', '#ff8a5c');
-  roundBtn(690, 372, 22, 'H', '#e2647a', 'x' + player.potions);
-  roundBtn(752, 372, 22, 'M', '#5a8fe2', 'x' + player.manaPotions);
+  roundBtn(690, 372, 22, 'H', '#e2647a', player.potions + '/' + POTION_CAP);
+  roundBtn(752, 372, 22, 'M', '#5a8fe2', player.manaPotions + '/' + MANA_POTION_CAP);
   roundBtn(866, 150, 22, 'I', '#cfd4dc');
   roundBtn(866, 100, 22, '⚙', '#cfd4dc');
   for (let i = 0; i < 4; i++) {
@@ -1052,8 +1108,8 @@ function drawHUD() {
   ctx.strokeStyle = '#000'; ctx.strokeRect(16, 33, 220, 10);
   ctx.fillStyle = '#cfe0ff'; ctx.font = '9px sans-serif'; ctx.fillText(`${Math.ceil(player.mana)}/${player.maxMana}`, 104, 42);
 
-  drawPotionIcon(28, 60, 6, 'health'); ctx.fillStyle = '#cfd4dc'; ctx.font = '12px sans-serif'; ctx.fillText(`x${player.potions} (1)`, 40, 64);
-  drawPotionIcon(120, 60, 6, 'mana'); ctx.fillStyle = '#cfd4dc'; ctx.fillText(`x${player.manaPotions} (2)`, 132, 64);
+  drawPotionIcon(28, 60, 6, 'health'); ctx.fillStyle = player.potions >= POTION_CAP ? '#ffcf5c' : '#cfd4dc'; ctx.font = '12px sans-serif'; ctx.fillText(`${player.potions}/${POTION_CAP} (1)`, 40, 64);
+  drawPotionIcon(120, 60, 6, 'mana'); ctx.fillStyle = player.manaPotions >= MANA_POTION_CAP ? '#ffcf5c' : '#cfd4dc'; ctx.fillText(`${player.manaPotions}/${MANA_POTION_CAP} (2)`, 132, 64);
   const a = player.attrs;
   ctx.fillStyle = '#d7c98a'; ctx.fillText(`${player.class ? player.class.name + '  ·  ' : ''}STR ${a.STR}  AGI ${a.AGI}  INT ${a.INT}`, 16, 82);
   ctx.fillStyle = '#cfd4dc';
@@ -1108,6 +1164,13 @@ function drawInventory() {
   ctx.fillStyle = '#241a1f'; ctx.fillRect(cb.x, cb.y, cb.w, cb.h);
   ctx.strokeStyle = '#7a4b5c'; ctx.lineWidth = 2; ctx.strokeRect(cb.x, cb.y, cb.w, cb.h);
   ctx.fillStyle = '#ff9a9a'; ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('✕', cb.x + cb.w / 2, cb.y + cb.h / 2 + 8); ctx.textAlign = 'left';
+
+  // Forge entry button
+  const fb = { x: px + pw - 190, y: py + 16, w: 124, h: 36, kind: 'forgeOpen' };
+  invRects.push(fb);
+  ctx.fillStyle = '#3a2c12'; ctx.fillRect(fb.x, fb.y, fb.w, fb.h);
+  ctx.strokeStyle = '#ffcf5c'; ctx.lineWidth = 2; ctx.strokeRect(fb.x, fb.y, fb.w, fb.h);
+  ctx.fillStyle = '#ffcf5c'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('⚒  Forge', fb.x + fb.w / 2, fb.y + 24); ctx.textAlign = 'left';
 
   const colW = pw / 2 - 30, leftX = px + 20, rightX = px + pw / 2 + 10;
   const rowH = 40, top = py + 84;
@@ -1166,6 +1229,123 @@ function drawInventory() {
   }
 }
 
+function drawMerge() {
+  mergeRects = [];
+  if (mergeMsgT > 0) mergeMsgT--; else mergeMsg = mergeMsg && mergeMsgT > 0 ? mergeMsg : null;
+  ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(0, 0, W, H);
+  const px = 40, py = 40, pw = W - 80, ph = H - 80;
+  mergePanel.x = px; mergePanel.y = py; mergePanel.w = pw; mergePanel.h = ph;
+  ctx.fillStyle = 'rgba(12,14,20,.98)'; ctx.fillRect(px, py, pw, ph);
+  ctx.strokeStyle = '#7a5b2a'; ctx.lineWidth = 2; ctx.strokeRect(px, py, pw, ph);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#ffcf5c'; ctx.font = 'bold 20px sans-serif'; ctx.fillText('⚒  Forge — combine 3 into 1', px + 20, py + 32);
+  ctx.fillStyle = '#7f8794'; ctx.font = '12px sans-serif';
+  ctx.fillText('Pick 3 items of the SAME rarity → get 1 of the next rarity up, with random stats.', px + 20, py + 52);
+
+  const cb = { x: px + pw - 52, y: py + 14, w: 40, h: 40, kind: 'close' };
+  mergeRects.push(cb);
+  ctx.fillStyle = '#241a1f'; ctx.fillRect(cb.x, cb.y, cb.w, cb.h);
+  ctx.strokeStyle = '#7a4b5c'; ctx.lineWidth = 2; ctx.strokeRect(cb.x, cb.y, cb.w, cb.h);
+  ctx.fillStyle = '#ff9a9a'; ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('✕', cb.x + cb.w / 2, cb.y + cb.h / 2 + 8); ctx.textAlign = 'left';
+
+  const colW = pw / 2 - 30, leftX = px + 20, rightX = px + pw / 2 + 10, top = py + 84;
+
+  // ---- LEFT: the three forge slots + result preview + FORGE button ----
+  const locked = mergeLockedRarity();
+  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 15px sans-serif';
+  ctx.fillText(locked ? `Slots — ${locked.name}` : 'Slots — tap items on the right', leftX, top);
+  const sw = (colW - 16) / 3, sh = 74;
+  for (let i = 0; i < 3; i++) {
+    const sx = leftX + i * (sw + 8), sy = top + 14;
+    mergeRects.push({ x: sx, y: sy, w: sw, h: sh, kind: 'slot', ref: i });
+    const it = mergeSlots[i];
+    ctx.fillStyle = '#171a21'; ctx.fillRect(sx, sy, sw, sh);
+    ctx.strokeStyle = it ? it.rarity.color : '#3a4150'; ctx.lineWidth = 2;
+    if (!it) { ctx.setLineDash([5, 4]); } ctx.strokeRect(sx, sy, sw, sh); ctx.setLineDash([]);
+    ctx.textAlign = 'center';
+    if (it) {
+      drawGem(sx + sw / 2, sy + 22, it.rarity.color, 8);
+      ctx.fillStyle = it.rarity.color; ctx.font = 'bold 10px sans-serif';
+      ctx.fillText(it.name.split(' ').slice(1).join(' '), sx + sw / 2, sy + 46);
+      ctx.fillStyle = '#6b7280'; ctx.font = '9px sans-serif'; ctx.fillText('tap to remove', sx + sw / 2, sy + 62);
+    } else { ctx.fillStyle = '#41474f'; ctx.font = '11px sans-serif'; ctx.fillText('empty', sx + sw / 2, sy + sh / 2 + 4); }
+    ctx.textAlign = 'left';
+  }
+  // Result preview
+  const ry = top + 14 + sh + 22;
+  ctx.fillStyle = '#9aa0a8'; ctx.font = '13px sans-serif';
+  if (locked) {
+    const i0 = RARITIES.indexOf(locked);
+    if (i0 < RARITIES.length - 1) {
+      ctx.fillText('Result:', leftX, ry);
+      ctx.fillStyle = locked.color; ctx.font = 'bold 14px sans-serif'; ctx.fillText(`3× ${locked.name}`, leftX + 56, ry);
+      ctx.fillStyle = '#9aa0a8'; ctx.font = '14px sans-serif'; ctx.fillText('→', leftX + 150, ry);
+      ctx.fillStyle = RARITIES[i0 + 1].color; ctx.font = 'bold 15px sans-serif'; ctx.fillText(`1× ${RARITIES[i0 + 1].name}`, leftX + 172, ry);
+    }
+  } else { ctx.fillText('Result: pick 3 matching items', leftX, ry); }
+
+  // FORGE button
+  const fb = { x: leftX, y: ry + 18, w: colW, h: 52, kind: 'forge' };
+  const ready = canForge();
+  mergeRects.push(fb);
+  ctx.fillStyle = ready ? '#3a2c12' : '#171a21'; ctx.fillRect(fb.x, fb.y, fb.w, fb.h);
+  ctx.strokeStyle = ready ? '#ffcf5c' : '#2a2f38'; ctx.lineWidth = 2; ctx.strokeRect(fb.x, fb.y, fb.w, fb.h);
+  ctx.fillStyle = ready ? '#ffcf5c' : '#4a4f58'; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(ready ? '⚒  FORGE' : `FORGE  (${mergeCount()}/3)`, fb.x + fb.w / 2, fb.y + 33); ctx.textAlign = 'left';
+  if (mergeMsg) { ctx.fillStyle = '#ffe08a'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(mergeMsg, leftX + colW / 2, fb.y + 70); ctx.textAlign = 'left'; }
+
+  // ---- RIGHT: scrollable backpack, non-matching rarities dimmed ----
+  const list = player.inventory.slice().reverse();
+  const total = list.length;
+  let by = top + 14;
+  const rowH = 34;
+  const maxRows = Math.max(1, Math.floor((py + ph - by - 20) / rowH));
+  mergeMaxRows = maxRows;
+  const maxScroll = Math.max(0, total - maxRows);
+  mergeScroll = clamp(mergeScroll, 0, maxScroll);
+  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 15px sans-serif'; ctx.fillText(`Backpack (${total})`, rightX, top);
+  if (total > maxRows) {
+    const up = { x: rightX + colW - 76, y: top - 18, w: 34, h: 24, kind: 'scrollUp' };
+    const dn = { x: rightX + colW - 38, y: top - 18, w: 34, h: 24, kind: 'scrollDown' };
+    for (const b of [up, dn]) {
+      mergeRects.push(b);
+      ctx.fillStyle = '#171a21'; ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.strokeStyle = '#3a4150'; ctx.lineWidth = 1; ctx.strokeRect(b.x, b.y, b.w, b.h);
+      ctx.fillStyle = '#cfd4dc'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(b.kind === 'scrollUp' ? '▲' : '▼', b.x + b.w / 2, b.y + 17); ctx.textAlign = 'left';
+    }
+  }
+  if (total === 0) { ctx.fillStyle = '#7f8794'; ctx.font = '13px sans-serif'; ctx.fillText('Empty — go kill things.', rightX + 4, by + 16); }
+  const visible = list.slice(mergeScroll, mergeScroll + maxRows);
+  for (const it of visible) {
+    const selectable = (!locked || it.rarity === locked) && RARITIES.indexOf(it.rarity) < RARITIES.length - 1;
+    mergeRects.push({ x: rightX, y: by, w: colW, h: rowH - 5, kind: 'pick', ref: it });
+    ctx.globalAlpha = selectable ? 1 : 0.32;
+    ctx.fillStyle = '#171a21'; ctx.fillRect(rightX, by, colW, rowH - 5);
+    ctx.strokeStyle = '#23272f'; ctx.lineWidth = 1; ctx.strokeRect(rightX, by, colW, rowH - 5);
+    ctx.fillStyle = it.rarity.color; ctx.font = 'bold 12px sans-serif'; ctx.fillText(it.name, rightX + 10, by + 13);
+    ctx.fillStyle = '#9aa0a8'; ctx.font = '10px sans-serif'; ctx.fillText(itemStatText(it), rightX + 10, by + 25);
+    ctx.globalAlpha = 1;
+    by += rowH;
+  }
+  if (total > maxRows) { ctx.fillStyle = '#6b7280'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right'; ctx.fillText(`${mergeScroll + 1}–${mergeScroll + visible.length} of ${total}`, rightX + colW, py + ph - 8); ctx.textAlign = 'left'; }
+}
+
+function handleMergeClick() {
+  for (const r of mergeRects) {
+    if (mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h) {
+      if (r.kind === 'close') closeMerge();
+      else if (r.kind === 'slot') removeFromMerge(r.ref);
+      else if (r.kind === 'pick') addToMerge(r.ref);
+      else if (r.kind === 'forge') doForge();
+      else if (r.kind === 'scrollUp') mergeScroll -= Math.max(1, mergeMaxRows - 1);
+      else if (r.kind === 'scrollDown') mergeScroll += Math.max(1, mergeMaxRows - 1);
+      return true;
+    }
+  }
+  return mouse.x >= mergePanel.x && mouse.x <= mergePanel.x + mergePanel.w && mouse.y >= mergePanel.y && mouse.y <= mergePanel.y + mergePanel.h;
+}
+
 function statLabel(stat, val) {
   if (stat === 'Crit') return `+${val}% Crit`;
   if (stat === 'CritDmg') return `+${val}% Crit Dmg`;
@@ -1181,6 +1361,7 @@ function handleInventoryClick() {
   for (const r of invRects) {
     if (mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h) {
       if (r.kind === 'close') showInv = false;
+      else if (r.kind === 'forgeOpen') openMerge();
       else if (r.kind === 'bag') equipItem(r.ref);
       else if (r.kind === 'slot') unequipSlot(r.ref);
       else if (r.kind === 'scrollUp') invScroll -= Math.max(1, invMaxRows - 1);
