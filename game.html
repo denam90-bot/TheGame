@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Game — Prototype 0.8</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #14161c; color: #cfd4dc; font-family: -apple-system, Segoe UI, Roboto, sans-serif; overflow: hidden; }
+  #wrap { display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: center; gap: 10px; }
+  canvas { background: #1c2029; border: 1px solid #2c313c; border-radius: 6px; box-shadow: 0 10px 40px rgba(0,0,0,.4); cursor: crosshair; }
+  #hud { font-size: 13px; color: #7f8794; letter-spacing: .3px; }
+  #hud b { color: #cfd4dc; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="900" height="560"></canvas>
+  <div id="hud">
+    <b>Move:</b> right-click / hold, or Arrow keys &nbsp;·&nbsp;
+    <b>Attack:</b> left-click / hold (swing or shoot) &nbsp;·&nbsp;
+    <b>Spells:</b> Q W E R &nbsp;·&nbsp;
+    <b>Potions:</b> 1 / 2 &nbsp;·&nbsp;
+    <b>Inventory:</b> I &nbsp;·&nbsp;
+    <b>Restart:</b> R (dead)
+  </div>
+</div>
+
+<script>
+// =====================================================================
+//  THE GAME — Prototype 0.8
+//  Adds: 2nd ring slot · STR/AGI/INT attributes with derived stats
+//  (Health/Mana/AtkSpeed) · weapon TYPES (melee swings + bow shots) with
+//  attack animations · left-click attack / right-click move.
+//  FUTURE hooks: class primary-stat damage bonus; spell levels; keybinds.
+// =====================================================================
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+const WALL = 24;
+const ROOM = { left: WALL, top: WALL, right: W - WALL, bottom: H - WALL };
+const BOSS_EVERY = 5;
+const DOOR = { h: 104, cx: W - WALL / 2, cy: H / 2 };
+
+// --------------------------------------------------------------------
+//  RARITY + ITEMS
+// --------------------------------------------------------------------
+const RARITIES = [
+  { name: 'Normal',    color: '#c6ccd4', weight: 46, mult: 1.0 },
+  { name: 'Uncommon',  color: '#5fcf6f', weight: 27, mult: 1.5 },
+  { name: 'Rare',      color: '#4a90d9', weight: 16, mult: 2.2 },
+  { name: 'Epic',      color: '#b96fe0', weight: 8,  mult: 3.2 },
+  { name: 'Legendary', color: '#ff8a3c', weight: 3,  mult: 4.6 },
+];
+const RARITY_TOTAL = RARITIES.reduce((s, r) => s + r.weight, 0);
+
+// Weapon definitions: melee variants swing arcs; bow shoots arrows.
+const WEAPONS = {
+  fist:  { ranged: false, arc: 0.60, reach: 46, spd: 1.15, base: 0,  color: '#dbe7f5', attr: null  },
+  sword: { ranged: false, arc: 0.75, reach: 66, spd: 1.05, base: 10, color: '#cfe6ff', attr: 'STR' },
+  axe:   { ranged: false, arc: 1.15, reach: 72, spd: 0.75, base: 15, color: '#ffcaa0', attr: 'STR' },
+  mace:  { ranged: false, arc: 0.95, reach: 58, spd: 0.85, base: 12, color: '#e6d7a3', attr: 'STR' },
+  bow:   { ranged: true,  arc: 0,    reach: 0,  spd: 1.05, base: 9,  color: '#bfe6a0', attr: 'AGI' },
+  staff: { ranged: false, arc: 0.70, reach: 60, spd: 0.95, base: 8,  color: '#c9a0ff', attr: 'INT' },
+};
+
+// slot + how the item's value is applied. 'ATTR' rolls a random attribute.
+const ITEM_TYPES = [
+  { type: 'Sword',  slot: 'Weapon',   weapon: 'sword' },
+  { type: 'Axe',    slot: 'Weapon',   weapon: 'axe'   },
+  { type: 'Mace',   slot: 'Weapon',   weapon: 'mace'  },
+  { type: 'Bow',    slot: 'Weapon',   weapon: 'bow'   },
+  { type: 'Staff',  slot: 'Weapon',   weapon: 'staff' },
+  { type: 'Shield', slot: 'Off-hand', stat: 'Armor'   },
+  { type: 'Helm',   slot: 'Helm',     stat: 'Armor'   },
+  { type: 'Boots',  slot: 'Boots',    stat: 'Speed'   },
+  { type: 'Amulet', slot: 'Amulet',   stat: 'ATTR'    },
+  { type: 'Ring',   slot: 'Ring',     stat: 'ATTR'    },
+];
+const SLOTS = ['Weapon', 'Off-hand', 'Helm', 'Amulet', 'Ring1', 'Ring2', 'Boots'];
+const ATTRS = ['STR', 'AGI', 'INT'];
+
+// Classes: each has a PRIMARY attribute that boosts its main damage type.
+//  Warrior STR -> melee attack damage · Rogue AGI -> attack damage (+ speed)
+//  Mage INT -> spell power (INT counts double for spells).
+const CLASSES = [
+  { name: 'Warrior', primary: 'STR', color: '#e08a4a', startWeapon: 'sword',
+    base: { STR: 6, AGI: 1, INT: 0 }, desc: 'Tanky melee bruiser. STR raises Health and attack damage.' },
+  { name: 'Hunter',  primary: 'AGI', color: '#5fcf8f', startWeapon: 'bow',
+    base: { STR: 1, AGI: 6, INT: 0 }, desc: 'Fast ranged skirmisher. AGI raises attack speed and damage.' },
+  { name: 'Mage',    primary: 'INT', color: '#7fb8ff', startWeapon: 'staff',
+    base: { STR: 0, AGI: 1, INT: 6 }, desc: 'Fragile spellcaster. INT raises Mana and spell power.' },
+];
+
+function rollRarity(minIdx = 0) {
+  let r = Math.random() * RARITY_TOTAL, idx = 0;
+  for (let i = 0; i < RARITIES.length; i++) { if ((r -= RARITIES[i].weight) <= 0) { idx = i; break; } }
+  if (idx < minIdx) idx = minIdx;
+  return RARITIES[idx];
+}
+function makeItem(minIdx = 0) {
+  const rar = rollRarity(minIdx);
+  const t = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
+  const scale = 3 + Math.floor(Math.random() * 6) + Math.floor(game.level * 0.8);
+  const item = { name: `${rar.name} ${t.type}`, rarity: rar, slot: t.slot };
+  if (t.weapon) {
+    const wd = WEAPONS[t.weapon];
+    item.weapon = t.weapon; item.ranged = wd.ranged;
+    item.stat = 'AtkDmg';
+    item.value = Math.round((wd.base + scale) * rar.mult);
+    if (wd.attr) { item.bonusStat = wd.attr; item.bonusValue = Math.max(1, Math.round(scale * 0.5 * rar.mult)); }
+  } else if (t.stat === 'ATTR') {
+    item.stat = ATTRS[Math.floor(Math.random() * ATTRS.length)];
+    item.value = Math.round(scale * rar.mult);
+  } else {
+    item.stat = t.stat;
+    item.value = Math.round(scale * rar.mult);
+  }
+  return item;
+}
+
+// --------------------------------------------------------------------
+//  INPUT
+// --------------------------------------------------------------------
+const keys = {};
+const mouse = { x: W / 2, y: H / 2, leftDown: false, rightDown: false };
+let showInv = false;
+let invRects = [];
+let moveTarget = null;
+
+window.addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  keys[k] = true;
+  if (k.startsWith('arrow')) e.preventDefault();
+  if (e.key === ' ') { e.preventDefault(); tryAttack(); }
+  if (k === 'i') showInv = !showInv;
+  if (k === '1') drinkHealth();
+  if (k === '2') drinkMana();
+  if (k === 'c' && game.over) { game.menu = true; return; } // back to class select
+  if (k === 'q' || k === 'w' || k === 'e' || k === 'r') {
+    if (game.over && k === 'r') { fullReset(); return; }
+    castSpell(KEY_ORDER.indexOf(k));
+  }
+});
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  mouse.x = e.clientX - r.left; mouse.y = e.clientY - r.top;
+});
+canvas.addEventListener('mousedown', e => {
+  if (game.menu) { if (e.button === 0) handleMenuClick(); return; }
+  if (e.button === 2) { // right = move
+    mouse.rightDown = true;
+    if (!game.over && !showInv) moveTarget = { x: mouse.x, y: mouse.y };
+    return;
+  }
+  // left button
+  mouse.leftDown = true;
+  if (game.over) { fullReset(); return; }
+  if (showInv && handleInventoryClick()) return;
+  tryAttack();
+});
+canvas.addEventListener('mouseup', e => { if (e.button === 2) mouse.rightDown = false; else mouse.leftDown = false; });
+
+// --------------------------------------------------------------------
+//  GAME STATE
+// --------------------------------------------------------------------
+const game = { menu: true, over: false, cleared: false, time: 0, kills: 0, level: 1, isBoss: false };
+
+// --------------------------------------------------------------------
+//  PLAYER + STATS
+// --------------------------------------------------------------------
+const BASE = { hp: 100, mana: 100, speed: 3.2, punch: 16 };
+const player = {
+  x: W / 2, y: H / 2, radius: 16, facing: 0,
+  hp: 100, maxHp: 100, hpRegen: 0, hitFlash: 0, healFlash: 0, manaFlash: 0,
+  mana: 100, maxMana: 100, manaRegen: 0.12,
+  speed: BASE.speed, potions: 1, manaPotions: 1,
+  class: null, spellPower: 0, spells: [],
+  attrs: { STR: 0, AGI: 0, INT: 0 },
+  weapon: { key: 'fist', ranged: false, arc: WEAPONS.fist.arc, reach: WEAPONS.fist.reach, color: WEAPONS.fist.color },
+  inventory: [],
+  equipped: { Weapon: null, 'Off-hand': null, Helm: null, Amulet: null, Ring1: null, Ring2: null, Boots: null },
+  stats: { attackDamage: BASE.punch, armor: 0, attacksPerSec: 2.7 },
+};
+const POTION_HEAL = 45, POTION_MANA = 55;
+
+function recomputeStats() {
+  // gather attributes + flat bonuses from gear
+  let STR = 0, AGI = 0, INT = 0, armor = 0, speedBonus = 0, weaponDamage = 0;
+  for (const slot of SLOTS) {
+    const it = player.equipped[slot]; if (!it) continue;
+    if (it.stat === 'STR') STR += it.value;
+    else if (it.stat === 'AGI') AGI += it.value;
+    else if (it.stat === 'INT') INT += it.value;
+    else if (it.stat === 'Armor') armor += it.value;
+    else if (it.stat === 'Speed') speedBonus += it.value;
+    else if (it.stat === 'AtkDmg') weaponDamage += it.value;
+    if (it.bonusStat === 'STR') STR += it.bonusValue;
+    else if (it.bonusStat === 'AGI') AGI += it.bonusValue;
+    else if (it.bonusStat === 'INT') INT += it.bonusValue;
+  }
+  if (player.class) { STR += player.class.base.STR; AGI += player.class.base.AGI; INT += player.class.base.INT; }
+  player.attrs = { STR, AGI, INT };
+  const prim = player.class ? player.class.primary : null;
+
+  // Weapon
+  const wq = player.equipped.Weapon;
+  const wkey = wq ? wq.weapon : 'fist';
+  const wdef = WEAPONS[wkey];
+  player.weapon = { key: wkey, ranged: wdef.ranged, arc: wdef.arc, reach: wdef.reach, color: wdef.color };
+
+  // Derived: Attack damage + class primary bonus (STR or AGI classes).
+  let atk = BASE.punch + weaponDamage;
+  if (prim === 'STR') atk += Math.round(STR * 1.2);
+  else if (prim === 'AGI') atk += Math.round(AGI * 1.2);
+  player.stats.attackDamage = atk;
+  player.stats.armor = armor;
+  // Spell power from INT (doubled for the Mage's primary).
+  player.spellPower = Math.round(INT * (prim === 'INT' ? 2 : 1));
+
+  // Attack speed from AGI + weapon speed
+  const atkSpeedMult = (1 + AGI * 0.04) * wdef.spd;
+  attack.cooldownMax = Math.max(6, Math.round(22 / atkSpeedMult));
+  attack.arc = wdef.arc; attack.reach = wdef.reach; attack.color = wdef.color; attack.ranged = wdef.ranged;
+  player.stats.attacksPerSec = 60 / attack.cooldownMax;
+
+  // Health from STR
+  const oldMaxHp = player.maxHp;
+  player.maxHp = BASE.hp + STR * 8;
+  player.hpRegen = STR * 0.02;
+  if (player.maxHp > oldMaxHp) player.hp += (player.maxHp - oldMaxHp);
+  player.hp = Math.min(player.hp, player.maxHp);
+
+  // Mana from INT
+  const oldMaxMana = player.maxMana;
+  player.maxMana = BASE.mana + INT * 6;
+  player.manaRegen = 0.12 + INT * 0.03;
+  if (player.maxMana > oldMaxMana) player.mana += (player.maxMana - oldMaxMana);
+  player.mana = Math.min(player.mana, player.maxMana);
+
+  // Move speed
+  player.speed = BASE.speed + speedBonus * 0.06;
+}
+
+function equipItem(item) {
+  const idx = player.inventory.indexOf(item); if (idx === -1) return;
+  player.inventory.splice(idx, 1);
+  let target = item.slot;
+  if (item.slot === 'Ring') {
+    if (!player.equipped.Ring1) target = 'Ring1';
+    else if (!player.equipped.Ring2) target = 'Ring2';
+    else target = 'Ring1';
+  }
+  const prev = player.equipped[target]; player.equipped[target] = item;
+  if (prev) player.inventory.push(prev);
+  recomputeStats();
+}
+function unequipSlot(slot) {
+  const it = player.equipped[slot]; if (!it) return;
+  player.equipped[slot] = null; player.inventory.push(it); recomputeStats();
+}
+function drinkHealth() {
+  if (game.menu || game.over || player.potions <= 0 || player.hp >= player.maxHp) return;
+  player.hp = Math.min(player.maxHp, player.hp + POTION_HEAL); player.potions--; player.healFlash = 12;
+}
+function drinkMana() {
+  if (game.menu || game.over || player.manaPotions <= 0 || player.mana >= player.maxMana) return;
+  player.mana = Math.min(player.maxMana, player.mana + POTION_MANA); player.manaPotions--; player.manaFlash = 12;
+}
+
+// --------------------------------------------------------------------
+//  SPELLS  (per-class spellbooks · damage scales with class primary stat
+//           · cooldown scales with damage · spells LEVEL up)
+// --------------------------------------------------------------------
+// kind = how the effect behaves. cost = mana. cd = base cooldown (frames).
+// dmg = base damage before stat scaling + level scaling.
+const SPELL_LIB = {
+  // WARRIOR — melee, hard-hitting, longer cooldowns, cheap mana
+  cleave: { name: 'Cleave',      cls: 'Warrior', color: '#ff9a4a', cost: 6,  cd: 50,  dmg: 55,  kind: 'cleave', desc: 'Wide heavy swing' },
+  slam:   { name: 'Ground Slam', cls: 'Warrior', color: '#e0a060', cost: 10, cd: 95,  dmg: 80,  kind: 'ring',   desc: 'Shockwave around you' },
+  whirl:  { name: 'Whirlwind',   cls: 'Warrior', color: '#ff7a4a', cost: 12, cd: 120, dmg: 70,  kind: 'whirl',  desc: 'Hit everything close' },
+  leap:   { name: 'Heroic Leap', cls: 'Warrior', color: '#ffb84a', cost: 14, cd: 160, dmg: 120, kind: 'leap',   desc: 'Jump to cursor & slam' },
+  // HUNTER — ranged, lower damage, fast cooldowns
+  multishot: { name: 'Multishot',    cls: 'Hunter', color: '#8fe0a0', cost: 6,  cd: 30,  dmg: 20, kind: 'spread', desc: 'Fan of 3 arrows' },
+  pierce:    { name: 'Piercing Shot',cls: 'Hunter', color: '#a0e0c0', cost: 8,  cd: 42,  dmg: 34, kind: 'pierce', desc: 'Arrow pierces all' },
+  rapid:     { name: 'Rapid Fire',   cls: 'Hunter', color: '#d0f0b0', cost: 10, cd: 60,  dmg: 18, kind: 'burst',  desc: 'Quick 5-arrow barrage' },
+  rain:      { name: 'Arrow Rain',   cls: 'Hunter', color: '#bfe6a0', cost: 12, cd: 90,  dmg: 48, kind: 'rain',   desc: 'Volley at cursor' },
+  // MAGE — ranged spell power, scales hard with INT
+  fireball: { name: 'Fireball',       cls: 'Mage', color: '#ff7a3c', cost: 10, cd: 34,  dmg: 42,  kind: 'fireball', desc: 'Explosive bolt' },
+  chain:    { name: 'Chain Lightning',cls: 'Mage', color: '#c9a0ff', cost: 14, cd: 55,  dmg: 52,  kind: 'chain',    desc: 'Arcs between foes' },
+  frost:    { name: 'Frost Nova',     cls: 'Mage', color: '#7fd8ff', cost: 16, cd: 80,  dmg: 40,  kind: 'nova',     desc: 'Freeze & slow nearby' },
+  meteor:   { name: 'Meteor',         cls: 'Mage', color: '#ff5c3c', cost: 30, cd: 165, dmg: 120, kind: 'meteor',   desc: 'Massive AoE' },
+};
+// Order in which a class learns its spells (slot Q,W,E,R).
+const CLASS_SPELLS = {
+  Warrior: ['cleave', 'slam', 'whirl', 'leap'],
+  Hunter:  ['multishot', 'pierce', 'rapid', 'rain'],
+  Mage:    ['fireball', 'chain', 'frost', 'meteor'],
+};
+const KEY_ORDER = ['q', 'w', 'e', 'r'];
+let projectiles = [], meteors = [], fx = [];
+
+function spellStatFor(def) { const p = { Warrior: 'STR', Hunter: 'AGI', Mage: 'INT' }[def.cls]; return player.attrs[p] || 0; }
+function spellDamage(inst, def) { const lvl = 1 + 0.25 * (inst.level - 1); return Math.round((def.dmg + spellStatFor(def) * 1.1) * lvl); }
+function spellCooldown(inst, def) { return Math.round(def.cd * Math.max(0.7, 1 - 0.04 * (inst.level - 1))); }
+
+function castSpell(i) {
+  if (game.menu || game.over || showInv) return;
+  const inst = player.spells[i]; if (!inst || inst.cd > 0) return;
+  const def = SPELL_LIB[inst.id];
+  if (player.mana < def.cost) { player.manaFlash = 10; return; }
+  player.mana -= def.cost; inst.cd = spellCooldown(inst, def);
+  castEffect(def, spellDamage(inst, def));
+}
+
+// ---- effect helpers ----
+function fireArrow(angle, dmg, color, pierce, speed) {
+  const sp = speed || 9;
+  projectiles.push({ x: player.x + Math.cos(angle) * 18, y: player.y + Math.sin(angle) * 18,
+    vx: Math.cos(angle) * sp, vy: Math.sin(angle) * sp, life: pierce ? 95 : 80, r: 4,
+    dmg, color, kind: pierce ? 'pierce' : 'arrow', hitSet: pierce ? new Set() : null });
+}
+function effectArc(color, dmg, reach, arc) {
+  attack.active = true; attack.t = 0; attack.dir = player.facing; attack.arc = arc; attack.reach = reach; attack.color = color;
+  for (const e of enemies) { if (e.dead) continue;
+    const dx = e.x - player.x, dy = e.y - player.y, dist = Math.hypot(dx, dy); if (dist > reach + e.radius) continue;
+    const ang = Math.atan2(dy, dx);
+    if (Math.abs(normalizeAngle(ang - player.facing)) <= arc / 2) { const kb = e.boss ? 4 : 14; e.x += Math.cos(ang) * kb; e.y += Math.sin(ang) * kb; hurtEnemy(e, dmg); } }
+}
+function effectRing(color, dmg, R, slow) {
+  fx.push({ kind: 'nova', x: player.x, y: player.y, r: R, life: 22, maxLife: 22, color });
+  for (const e of enemies) { if (e.dead) continue; if (Math.hypot(e.x - player.x, e.y - player.y) < R + e.radius) { hurtEnemy(e, dmg); if (slow) e.slowT = 150; } }
+}
+function effectLeap(color, dmg) {
+  const tx = clamp(mouse.x, ROOM.left + player.radius, ROOM.right - player.radius), ty = clamp(mouse.y, ROOM.top + player.radius, ROOM.bottom - player.radius);
+  player.x = tx; player.y = ty;
+  fx.push({ kind: 'boom', x: tx, y: ty, r: 92, life: 18, maxLife: 18, color });
+  damageInRadius(tx, ty, 92, dmg);
+}
+function effectChain(color, dmg) {
+  let src = { x: player.x, y: player.y }; let pool = enemies.filter(e => !e.dead);
+  for (let i = 0; i < 4; i++) {
+    let best = null, bd = 1e9; const range = i === 0 ? 360 : 160;
+    for (const e of pool) { const d = Math.hypot(e.x - src.x, e.y - src.y); if (d < range && d < bd) { bd = d; best = e; } }
+    if (!best) break;
+    fx.push({ kind: 'bolt', x1: src.x, y1: src.y, x2: best.x, y2: best.y, life: 10, color });
+    hurtEnemy(best, dmg * (1 - i * 0.15)); pool = pool.filter(e => e !== best); src = { x: best.x, y: best.y };
+  }
+  if (enemies.filter(e => !e.dead).length === 0) fx.push({ kind: 'bolt', x1: player.x, y1: player.y, x2: mouse.x, y2: mouse.y, life: 10, color });
+}
+function spawnMeteor(dmg, R, color) {
+  const tx = clamp(mouse.x, ROOM.left + 20, ROOM.right - 20), ty = clamp(mouse.y, ROOM.top + 20, ROOM.bottom - 20);
+  meteors.push({ x: tx, y: ty, timer: 34, r: R, dmg, color });
+}
+function castEffect(def, dmg) {
+  switch (def.kind) {
+    case 'cleave': effectArc(def.color, dmg, 96, 1.8); break;
+    case 'whirl':  effectRing(def.color, dmg, 86, false); break;
+    case 'ring':   effectRing(def.color, dmg, 128, false); break;
+    case 'leap':   effectLeap(def.color, dmg); break;
+    case 'spread': [-0.24, 0, 0.24].forEach(o => fireArrow(player.facing + o, dmg, def.color, false)); break;
+    case 'burst':  for (let i = 0; i < 5; i++) fireArrow(player.facing + (Math.random() - 0.5) * 0.2, dmg, def.color, false, 9 + Math.random() * 2); break;
+    case 'pierce': fireArrow(player.facing, dmg, def.color, true, 11); break;
+    case 'rain':   spawnMeteor(dmg, 82, def.color); break;
+    case 'fireball': projectiles.push({ x: player.x + Math.cos(player.facing) * 20, y: player.y + Math.sin(player.facing) * 20,
+      vx: Math.cos(player.facing) * 7.2, vy: Math.sin(player.facing) * 7.2, life: 80, r: 7, dmg, splash: 46, color: def.color, kind: 'fireball' }); break;
+    case 'nova':   effectRing(def.color, dmg, 118, true); break;
+    case 'chain':  effectChain(def.color, dmg); break;
+    case 'meteor': spawnMeteor(dmg, 94, def.color); break;
+  }
+}
+
+// ---- learning / leveling spells ----
+let groundTomes = [];
+function addTome(x, y) { groundTomes.push({ x: clamp(x, ROOM.left + 12, ROOM.right - 12), y: clamp(y, ROOM.top + 12, ROOM.bottom - 12), bob: Math.random() * Math.PI * 2 }); }
+function grantSpell() {
+  if (!player.class) return;
+  const pool = CLASS_SPELLS[player.class.name];
+  const known = new Set(player.spells.map(s => s.id));
+  const next = pool.find(id => !known.has(id));
+  if (next && player.spells.length < 4) {
+    player.spells.push({ id: next, level: 1, cd: 0 });
+    fx.push({ kind: 'toast', text: `New spell: ${SPELL_LIB[next].name}  (${KEY_ORDER[player.spells.length - 1].toUpperCase()})`, life: 150, maxLife: 150 });
+  } else {
+    const s = player.spells[Math.floor(Math.random() * player.spells.length)];
+    s.level++;
+    fx.push({ kind: 'toast', text: `${SPELL_LIB[s.id].name} → Level ${s.level}`, life: 150, maxLife: 150 });
+  }
+}
+
+// --------------------------------------------------------------------
+//  BASIC ATTACK (weapon-based: melee swing or bow shot)
+// --------------------------------------------------------------------
+const attack = { active: false, t: 0, duration: 12, cooldown: 0, cooldownMax: 20, reach: 46, arc: 0.6, color: '#dbe7f5', ranged: false, dir: 0 };
+function tryAttack() {
+  if (game.menu || game.over || showInv || attack.cooldown > 0) return;
+  attack.cooldown = attack.cooldownMax;
+  if (player.weapon.ranged) {
+    // Bow: fire an arrow toward the cursor
+    const sp = 9;
+    projectiles.push({ x: player.x + Math.cos(player.facing) * 18, y: player.y + Math.sin(player.facing) * 18,
+      vx: Math.cos(player.facing) * sp, vy: Math.sin(player.facing) * sp, life: 70, r: 4,
+      dmg: player.stats.attackDamage, color: player.weapon.color, kind: 'arrow' });
+  } else {
+    // Melee: animated swing arc, damages everything in the arc now
+    attack.active = true; attack.t = 0; attack.dir = player.facing;
+    attack.arc = player.weapon.arc; attack.reach = player.weapon.reach; attack.color = player.weapon.color;
+    for (const e of enemies) {
+      if (e.dead) continue;
+      const dx = e.x - player.x, dy = e.y - player.y, dist = Math.hypot(dx, dy);
+      if (dist > attack.reach + e.radius) continue;
+      const ang = Math.atan2(dy, dx);
+      if (Math.abs(normalizeAngle(ang - attack.dir)) <= attack.arc / 2) {
+        const kb = e.boss ? 3 : 10; e.x += Math.cos(ang) * kb; e.y += Math.sin(ang) * kb;
+        hurtEnemy(e, player.stats.attackDamage);
+      }
+    }
+  }
+}
+
+// --------------------------------------------------------------------
+//  ENEMY DAMAGE + DEATH + DROPS
+// --------------------------------------------------------------------
+function hurtEnemy(e, dmg) {
+  if (e.dead) return;
+  e.hp -= dmg; e.hitFlash = 8;
+  if (e.hp <= 0) { e.dead = true; game.kills++; dropForEnemy(e); }
+}
+function dropForEnemy(e) {
+  if (e.boss) {
+    dropLoot(e.x, e.y, 4 + Math.floor(game.level / 5), 2, true);
+    dropPotion(e.x, e.y, 2, 'health'); dropPotion(e.x, e.y, 2, 'mana');
+    addTome(e.x, e.y); // bosses always drop a spell tome
+  } else {
+    if (Math.random() < 0.68) dropLoot(e.x, e.y, 1, 0, false);
+    if (Math.random() < 0.16) dropPotion(e.x, e.y, 1, 'health');
+    if (Math.random() < 0.12) dropPotion(e.x, e.y, 1, 'mana');
+    if (Math.random() < 0.03) addTome(e.x, e.y); // rare spell tome from mobs
+  }
+}
+function damageInRadius(x, y, r, dmg) {
+  for (const e of enemies) { if (e.dead) continue; if (Math.hypot(e.x - x, e.y - y) < r + e.radius) hurtEnemy(e, dmg); }
+}
+
+// --------------------------------------------------------------------
+//  LOOT + POTIONS ON GROUND
+// --------------------------------------------------------------------
+let groundLoot = [], groundPotions = [];
+function dropLoot(x, y, count, minIdx, boss) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2, r = boss ? 20 + Math.random() * 40 : 0;
+    const lx = clamp(x + Math.cos(a) * r, ROOM.left + 12, ROOM.right - 12);
+    const ly = clamp(y + Math.sin(a) * r, ROOM.top + 12, ROOM.bottom - 12);
+    groundLoot.push({ x: lx, y: ly, item: makeItem((boss && i === 0) ? 3 : minIdx), bob: Math.random() * Math.PI * 2 });
+  }
+}
+function dropPotion(x, y, count, type) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2, r = count > 1 ? 18 + Math.random() * 30 : 0;
+    const px = clamp(x + Math.cos(a) * r, ROOM.left + 12, ROOM.right - 12);
+    const py = clamp(y + Math.sin(a) * r, ROOM.top + 12, ROOM.bottom - 12);
+    groundPotions.push({ x: px, y: py, type, bob: Math.random() * Math.PI * 2 });
+  }
+}
+
+// --------------------------------------------------------------------
+//  ENEMIES + LEVEL SETUP
+// --------------------------------------------------------------------
+let enemies = [], spawnQueue = [], spawnTimer = 0;
+function makeGrunt() {
+  let x, y, tries = 0;
+  do { x = ROOM.left + 20 + Math.random() * (ROOM.right - ROOM.left - 40);
+       y = ROOM.top + 20 + Math.random() * (ROOM.bottom - ROOM.top - 40); tries++;
+  } while (Math.hypot(x - player.x, y - player.y) < 170 && tries < 30);
+  const hp = 55 + game.level * 15;
+  return { x, y, radius: 15, hp, maxHp: hp, speed: Math.min(2.6, 1.0 + Math.random() * 0.6 + game.level * 0.03),
+           dead: false, hitFlash: 0, touchCd: 0, slowT: 0, damage: 6 + Math.round(game.level * 1.3), spawnFx: 12, boss: false };
+}
+function makeBoss() {
+  const hp = 480 + game.level * 120;
+  return { x: W / 2, y: ROOM.top + 70, radius: 34, hp, maxHp: hp, speed: 0.8 + game.level * 0.02,
+           dead: false, hitFlash: 0, touchCd: 0, slowT: 0, damage: 14 + game.level * 2, spawnFx: 18, boss: true };
+}
+function setupLevel() {
+  enemies = []; groundLoot = []; groundPotions = []; groundTomes = []; projectiles = []; meteors = []; fx = [];
+  spawnQueue = []; spawnTimer = 20; game.time = 0; game.cleared = false; moveTarget = null;
+  for (const s of player.spells) s.cd = 0; attack.active = false; attack.cooldown = 0;
+  player.x = ROOM.left + 60; player.y = H / 2;
+  game.isBoss = (game.level % BOSS_EVERY === 0);
+  if (game.isBoss) {
+    const adds = 2 + Math.floor(game.level / BOSS_EVERY);
+    for (let i = 0; i < adds; i++) spawnQueue.push('grunt');
+    spawnQueue.push('boss');
+  } else {
+    const count = 8 + game.level * 2;
+    for (let i = 0; i < count; i++) spawnQueue.push('grunt');
+  }
+}
+
+// --------------------------------------------------------------------
+//  HELPERS
+// --------------------------------------------------------------------
+function normalizeAngle(a) { while (a > Math.PI) a -= Math.PI*2; while (a < -Math.PI) a += Math.PI*2; return a; }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function confine(o) { o.x = clamp(o.x, ROOM.left + o.radius, ROOM.right - o.radius); o.y = clamp(o.y, ROOM.top + o.radius, ROOM.bottom - o.radius); }
+function inRoom(x, y) { return x > ROOM.left && x < ROOM.right && y > ROOM.top && y < ROOM.bottom; }
+function nextLevel() { game.level++; setupLevel(); }
+function makeStarterWeapon(wkey) {
+  const wd = WEAPONS[wkey];
+  const nm = wkey.charAt(0).toUpperCase() + wkey.slice(1);
+  const it = { name: `Normal ${nm}`, rarity: RARITIES[0], slot: 'Weapon', weapon: wkey, ranged: wd.ranged, stat: 'AtkDmg', value: Math.round(wd.base + 4) };
+  if (wd.attr) { it.bonusStat = wd.attr; it.bonusValue = 3; }
+  return it;
+}
+function startRun(cls) {
+  player.class = cls;
+  game.menu = false; game.over = false; game.level = 1; game.kills = 0;
+  player.hitFlash = 0; player.healFlash = 0; player.manaFlash = 0; player.potions = 1; player.manaPotions = 1;
+  player.inventory = [];
+  player.equipped = { Weapon: null, 'Off-hand': null, Helm: null, Amulet: null, Ring1: null, Ring2: null, Boots: null };
+  if (cls.startWeapon) player.equipped.Weapon = makeStarterWeapon(cls.startWeapon);
+  player.spells = [{ id: CLASS_SPELLS[cls.name][0], level: 1, cd: 0 }]; // start with one spell (Q)
+  recomputeStats(); player.hp = player.maxHp; player.mana = player.maxMana;
+  setupLevel();
+}
+function fullReset() { startRun(player.class || CLASSES[0]); }
+
+// --------------------------------------------------------------------
+//  UPDATE
+// --------------------------------------------------------------------
+function update() {
+  if (game.menu || game.over || showInv) return;
+  game.time++;
+
+  // Movement: arrow keys override right-click move (WASD is free; W etc are spells)
+  let mx = 0, my = 0;
+  if (keys['arrowup'])    my -= 1;
+  if (keys['arrowdown'])  my += 1;
+  if (keys['arrowleft'])  mx -= 1;
+  if (keys['arrowright']) mx += 1;
+  if (mx !== 0 || my !== 0) {
+    moveTarget = null;
+    const l = Math.hypot(mx, my); player.x += (mx/l)*player.speed; player.y += (my/l)*player.speed;
+  } else {
+    if (mouse.rightDown) moveTarget = { x: mouse.x, y: mouse.y };
+    if (moveTarget) {
+      const dx = moveTarget.x - player.x, dy = moveTarget.y - player.y, d = Math.hypot(dx, dy);
+      if (d > 4) { player.x += (dx/d)*player.speed; player.y += (dy/d)*player.speed; } else moveTarget = null;
+    }
+  }
+  confine(player);
+  player.facing = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+
+  // Auto-attack while holding left mouse
+  if (mouse.leftDown) tryAttack();
+
+  // Resources / timers
+  player.hp = Math.min(player.maxHp, player.hp + player.hpRegen);
+  player.mana = Math.min(player.maxMana, player.mana + player.manaRegen);
+  for (const s of player.spells) if (s.cd > 0) s.cd--;
+  if (attack.cooldown > 0) attack.cooldown--;
+  if (attack.active) { attack.t++; if (attack.t >= attack.duration) attack.active = false; }
+  if (player.hitFlash > 0) player.hitFlash--;
+  if (player.healFlash > 0) player.healFlash--;
+  if (player.manaFlash > 0) player.manaFlash--;
+
+  // Spawning
+  spawnTimer--;
+  if (spawnQueue.length > 0 && spawnTimer <= 0) { enemies.push(spawnQueue.shift() === 'boss' ? makeBoss() : makeGrunt()); spawnTimer = 50; }
+
+  // Projectiles (fireball splash · arrow single · pierce multi)
+  for (const p of projectiles) {
+    p.x += p.vx; p.y += p.vy; p.life--;
+    if (p.kind === 'pierce') {
+      for (const e of enemies) { if (e.dead || p.hitSet.has(e)) continue; if (Math.hypot(e.x - p.x, e.y - p.y) < e.radius + p.r) { p.hitSet.add(e); hurtEnemy(e, p.dmg); } }
+      if (!inRoom(p.x, p.y) || p.life <= 0) p.dead = true;
+      continue;
+    }
+    let hitE = null;
+    for (const e of enemies) { if (e.dead) continue; if (Math.hypot(e.x - p.x, e.y - p.y) < e.radius + p.r) { hitE = e; break; } }
+    if (hitE || !inRoom(p.x, p.y) || p.life <= 0) {
+      if (p.kind === 'fireball') { fx.push({ kind: 'boom', x: p.x, y: p.y, r: p.splash, life: 16, maxLife: 16, color: p.color }); damageInRadius(p.x, p.y, p.splash, p.dmg); }
+      else if (p.kind === 'arrow' && hitE) hurtEnemy(hitE, p.dmg);
+      p.dead = true;
+    }
+  }
+  projectiles = projectiles.filter(p => !p.dead);
+
+  // Meteors
+  for (const m of meteors) { m.timer--; if (m.timer <= 0) { fx.push({ kind: 'boom', x: m.x, y: m.y, r: m.r, life: 20, maxLife: 20, color: m.color }); damageInRadius(m.x, m.y, m.r, m.dmg); m.done = true; } }
+  meteors = meteors.filter(m => !m.done);
+
+  for (const f of fx) f.life--; fx = fx.filter(f => f.life > 0);
+
+  // Enemy AI
+  for (const e of enemies) {
+    if (e.dead) continue;
+    if (e.hitFlash > 0) e.hitFlash--; if (e.touchCd > 0) e.touchCd--; if (e.spawnFx > 0) e.spawnFx--; if (e.slowT > 0) e.slowT--;
+    const spd = e.speed * (e.slowT > 0 ? 0.45 : 1);
+    const dx = player.x - e.x, dy = player.y - e.y, dist = Math.hypot(dx, dy) || 1;
+    e.x += (dx / dist) * spd; e.y += (dy / dist) * spd; confine(e);
+    if (dist < e.radius + player.radius && e.touchCd <= 0) {
+      const dmg = Math.max(1, Math.round(e.damage * (50 / (50 + player.stats.armor))));
+      player.hp -= dmg; player.hitFlash = 8; e.touchCd = e.boss ? 55 : 40;
+      if (player.hp <= 0) { player.hp = 0; game.over = true; }
+    }
+  }
+  for (let i = 0; i < enemies.length; i++) for (let j = i+1; j < enemies.length; j++) {
+    const a = enemies[i], b = enemies[j]; if (a.dead || b.dead) continue;
+    const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, min = a.radius + b.radius;
+    if (d < min) { const p = (min - d)/2; a.x -= dx/d*p; a.y -= dy/d*p; b.x += dx/d*p; b.y += dy/d*p; }
+  }
+  enemies = enemies.filter(e => !e.dead);
+
+  // Pickups
+  groundLoot = groundLoot.filter(g => { if (Math.hypot(g.x - player.x, g.y - player.y) < player.radius + 12) { player.inventory.push(g.item); return false; } return true; });
+  groundPotions = groundPotions.filter(p => { if (Math.hypot(p.x - player.x, p.y - player.y) < player.radius + 12) { if (p.type === 'mana') player.manaPotions++; else player.potions++; return false; } return true; });
+  groundTomes = groundTomes.filter(tm => { if (Math.hypot(tm.x - player.x, tm.y - player.y) < player.radius + 14) { grantSpell(); return false; } return true; });
+
+  // Door / progression — clearing the room drops one guaranteed spell tome by the exit
+  if (!game.cleared && game.time > 5 && spawnQueue.length === 0 && enemies.length === 0) { game.cleared = true; addTome(ROOM.right - 80, DOOR.cy); }
+  if (game.cleared && player.x > ROOM.right - player.radius - 5 && Math.abs(player.y - DOOR.cy) < DOOR.h / 2 - 6) nextLevel();
+}
+
+// --------------------------------------------------------------------
+//  DRAW
+// --------------------------------------------------------------------
+const invPanel = { x: 0, y: 0, w: 0, h: 0 };
+function drawBar(x, y, w, h, frac, color) { ctx.fillStyle = '#000'; ctx.fillRect(x, y, w, h); ctx.fillStyle = color; ctx.fillRect(x, y, w * clamp(frac, 0, 1), h); }
+function drawGem(x, y, color, size) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(Math.PI / 4);
+  ctx.fillStyle = color; ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.lineWidth = 1.5;
+  ctx.fillRect(-size, -size, size*2, size*2); ctx.strokeRect(-size, -size, size*2, size*2); ctx.restore();
+}
+function drawPotionIcon(x, y, s, type) {
+  const c = type === 'mana' ? '#3b7de2' : '#e23b4e', dk = type === 'mana' ? '#0d1a2a' : '#2a0d12';
+  ctx.fillStyle = c; ctx.strokeStyle = dk; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(x, y + 1, s, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = dk; ctx.fillRect(x - 2.5, y - s - 3, 5, 5);
+  if (type === 'mana') { ctx.fillStyle = '#cfe4ff'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('M', x, y + 4); ctx.textAlign = 'start'; }
+  else { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x - 3, y + 1); ctx.lineTo(x + 3, y + 1); ctx.moveTo(x, y - 2); ctx.lineTo(x, y + 4); ctx.stroke(); }
+}
+function drawTome(x, y) {
+  ctx.fillStyle = '#6a4fb0'; ctx.fillRect(x - 8, y - 10, 16, 20);
+  ctx.fillStyle = '#c9a0ff'; ctx.fillRect(x - 8, y - 10, 4, 20);
+  ctx.strokeStyle = '#ffe08a'; ctx.lineWidth = 1.5; ctx.strokeRect(x - 8, y - 10, 16, 20);
+  ctx.fillStyle = '#ffe08a'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('✦', x + 1, y + 4); ctx.textAlign = 'start';
+}
+
+function draw() {
+  if (game.menu) { drawMenu(); return; }
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#1c2029'; ctx.fillRect(ROOM.left, ROOM.top, ROOM.right-ROOM.left, ROOM.bottom-ROOM.top);
+  ctx.strokeStyle = '#232833'; ctx.lineWidth = 1;
+  for (let x = ROOM.left; x < ROOM.right; x += 45) { ctx.beginPath(); ctx.moveTo(x, ROOM.top); ctx.lineTo(x, ROOM.bottom); ctx.stroke(); }
+  for (let y = ROOM.top; y < ROOM.bottom; y += 45) { ctx.beginPath(); ctx.moveTo(ROOM.left, y); ctx.lineTo(ROOM.right, y); ctx.stroke(); }
+
+  ctx.fillStyle = game.isBoss ? '#4a2f3a' : '#3a4150';
+  ctx.fillRect(0, 0, W, WALL); ctx.fillRect(0, H - WALL, W, WALL); ctx.fillRect(0, 0, WALL, H); ctx.fillRect(W - WALL, 0, WALL, H);
+  ctx.strokeStyle = game.isBoss ? '#7a4b5c' : '#525b6d'; ctx.lineWidth = 2;
+  ctx.strokeRect(ROOM.left, ROOM.top, ROOM.right-ROOM.left, ROOM.bottom-ROOM.top);
+
+  if (moveTarget) { ctx.strokeStyle = 'rgba(150,200,255,.5)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(moveTarget.x, moveTarget.y, 8, 0, Math.PI*2); ctx.stroke(); }
+
+  if (game.cleared) {
+    const dy = DOOR.cy - DOOR.h / 2; const pulse = 0.5 + 0.5 * Math.sin(game.time * 0.12);
+    ctx.fillStyle = '#20130a'; ctx.fillRect(W - WALL, dy, WALL, DOOR.h);
+    ctx.save(); ctx.shadowColor = '#ffcf5c'; ctx.shadowBlur = 14 + pulse * 12;
+    ctx.strokeStyle = `rgba(255,207,92,${0.7 + pulse*0.3})`; ctx.lineWidth = 3; ctx.strokeRect(W - WALL + 1, dy + 1, WALL - 2, DOOR.h - 2); ctx.restore();
+    ctx.fillStyle = '#ffcf5c'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'right'; ctx.fillText('EXIT →', W - WALL - 10, dy - 8); ctx.textAlign = 'start';
+  }
+
+  for (const m of meteors) {
+    const prog = 1 - m.timer / 34; const rr = m.r * (0.4 + prog*0.6);
+    ctx.strokeStyle = `rgba(255,90,60,${0.4 + prog*0.5})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(m.x, m.y, rr, 0, Math.PI*2); ctx.stroke();
+    ctx.fillStyle = `rgba(255,120,60,${0.10 + prog*0.15})`; ctx.beginPath(); ctx.arc(m.x, m.y, rr, 0, Math.PI*2); ctx.fill();
+  }
+
+  for (const p of groundPotions) { const yb = p.y + Math.sin(game.time * 0.08 + p.bob) * 3; ctx.save(); ctx.shadowColor = p.type === 'mana' ? '#3b7de2' : '#e23b4e'; ctx.shadowBlur = 10; drawPotionIcon(p.x, yb, 6, p.type); ctx.restore(); }
+  for (const g of groundLoot) { const yb = g.y + Math.sin(game.time * 0.08 + g.bob) * 3; ctx.save(); ctx.shadowColor = g.item.rarity.color; ctx.shadowBlur = 12; drawGem(g.x, yb, g.item.rarity.color, 7); ctx.restore(); }
+  for (const tm of groundTomes) { const yb = tm.y + Math.sin(game.time * 0.08 + tm.bob) * 3; ctx.save(); ctx.shadowColor = '#c9a0ff'; ctx.shadowBlur = 14; drawTome(tm.x, yb); ctx.restore(); }
+
+  let boss = null;
+  for (const e of enemies) {
+    if (e.boss) boss = e;
+    ctx.globalAlpha = e.spawnFx > 0 ? 0.4 + (18 - e.spawnFx)/18*0.6 : 1;
+    let col = e.boss ? '#a8323f' : '#b5573f';
+    if (e.hitFlash > 0) col = e.boss ? '#ffb35c' : '#ff8a5c'; else if (e.slowT > 0) col = e.boss ? '#7a6fb0' : '#6f86b5';
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(e.x, e.y, e.radius, 0, Math.PI*2); ctx.fill();
+    if (e.boss) { ctx.strokeStyle = '#ffd35c'; ctx.lineWidth = 3; ctx.stroke(); }
+    else { ctx.globalAlpha = 1; drawBar(e.x - 20, e.y - e.radius - 10, 40, 4, e.hp / e.maxHp, '#6fcf5f'); }
+    ctx.globalAlpha = 1;
+  }
+
+  // Projectiles: fireball orb / arrow shaft
+  for (const p of projectiles) {
+    if (p.kind === 'arrow' || p.kind === 'pierce') {
+      const a = Math.atan2(p.vy, p.vx); ctx.strokeStyle = p.color; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x - Math.cos(a)*14, p.y - Math.sin(a)*14); ctx.stroke();
+      ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, Math.PI*2); ctx.fill();
+    } else {
+      ctx.save(); ctx.shadowColor = p.color; ctx.shadowBlur = 14; ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill(); ctx.restore();
+    }
+  }
+
+  for (const f of fx) {
+    const t = f.life / f.maxLife;
+    if (f.kind === 'nova') { ctx.strokeStyle = `rgba(127,216,255,${t})`; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (1 - t) + 8, 0, Math.PI*2); ctx.stroke(); }
+    else if (f.kind === 'boom') { ctx.fillStyle = `rgba(255,140,70,${0.5 * t})`; ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (1 - t*0.4), 0, Math.PI*2); ctx.fill(); }
+    else if (f.kind === 'bolt') { ctx.strokeStyle = f.color; ctx.lineWidth = 2 + 2*t; ctx.globalAlpha = 0.5 + 0.5*t;
+      ctx.beginPath(); ctx.moveTo(f.x1, f.y1); const mx2=(f.x1+f.x2)/2+(Math.random()-0.5)*16, my2=(f.y1+f.y2)/2+(Math.random()-0.5)*16; ctx.lineTo(mx2,my2); ctx.lineTo(f.x2, f.y2); ctx.stroke(); ctx.globalAlpha = 1; }
+    else if (f.kind === 'toast') { ctx.globalAlpha = clamp(f.life / 45, 0, 1); ctx.fillStyle = '#ffe08a'; ctx.font = 'bold 17px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(f.text, W / 2, 138); ctx.textAlign = 'start'; ctx.globalAlpha = 1; }
+  }
+
+  // Melee swing animation
+  if (attack.active) {
+    const prog = attack.t / attack.duration;
+    const a0 = attack.dir - attack.arc / 2, cur = a0 + attack.arc * prog;
+    ctx.fillStyle = `rgba(200,220,255,${0.26*(1-prog)+0.05})`;
+    ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.arc(player.x, player.y, attack.reach, a0, cur); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = attack.color; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(player.x + Math.cos(cur)*attack.reach, player.y + Math.sin(cur)*attack.reach); ctx.stroke();
+  }
+
+  // Player
+  ctx.fillStyle = player.hitFlash > 0 ? '#ff5c5c' : (player.healFlash > 0 ? '#5fe08b' : '#4a90d9');
+  ctx.beginPath(); ctx.arc(player.x, player.y, player.radius, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#dbe7f5'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(player.x, player.y);
+  ctx.lineTo(player.x + Math.cos(player.facing)*(player.radius+8), player.y + Math.sin(player.facing)*(player.radius+8)); ctx.stroke();
+
+  if (boss) {
+    const bw = 520, bx = (W - bw) / 2, by = 40;
+    drawBar(bx, by, bw, 14, boss.hp / boss.maxHp, '#e0483d');
+    ctx.strokeStyle = '#ffd35c'; ctx.lineWidth = 2; ctx.strokeRect(bx, by, bw, 14);
+    ctx.fillStyle = '#ffd35c'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(`BOSS — Level ${game.level}`, W / 2, by - 6); ctx.textAlign = 'start';
+  }
+
+  drawHUD();
+  if (game.cleared) {
+    ctx.fillStyle = 'rgba(30,40,30,.85)'; ctx.fillRect(W/2 - 230, ROOM.top + 8, 460, 30);
+    ctx.strokeStyle = '#5fe08b'; ctx.lineWidth = 1; ctx.strokeRect(W/2 - 230, ROOM.top + 8, 460, 30);
+    ctx.fillStyle = '#8be08b'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('Room cleared — grab the ✦ spell tome & loot, then take the door →', W/2, ROOM.top + 28); ctx.textAlign = 'start';
+  }
+  if (showInv) drawInventory();
+  if (game.over) {
+    ctx.fillStyle = 'rgba(0,0,0,.68)'; ctx.fillRect(0, 0, W, H); ctx.textAlign = 'center';
+    ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 34px sans-serif'; ctx.fillText('You died', W/2, H/2 - 14);
+    ctx.font = '16px sans-serif'; ctx.fillText(`Reached level ${game.level} · ${game.kills} kills`, W/2, H/2 + 16);
+    ctx.fillText('Press R or click to restart · C to change class', W/2, H/2 + 44); ctx.textAlign = 'start';
+  }
+}
+
+function drawHUD() {
+  drawBar(16, 16, 220, 14, player.hp / player.maxHp, '#e0483d');
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.strokeRect(16, 16, 220, 14);
+  ctx.fillStyle = '#fff'; ctx.font = '11px sans-serif'; ctx.fillText(`${Math.ceil(player.hp)}/${player.maxHp}`, 100, 27);
+  drawBar(16, 33, 220, 10, player.mana / player.maxMana, player.manaFlash > 0 ? '#7fb8ff' : '#3b7de2');
+  ctx.strokeStyle = '#000'; ctx.strokeRect(16, 33, 220, 10);
+  ctx.fillStyle = '#cfe0ff'; ctx.font = '9px sans-serif'; ctx.fillText(`${Math.ceil(player.mana)}/${player.maxMana}`, 104, 42);
+
+  drawPotionIcon(28, 60, 6, 'health'); ctx.fillStyle = '#cfd4dc'; ctx.font = '12px sans-serif'; ctx.fillText(`x${player.potions} (1)`, 40, 64);
+  drawPotionIcon(120, 60, 6, 'mana'); ctx.fillStyle = '#cfd4dc'; ctx.fillText(`x${player.manaPotions} (2)`, 132, 64);
+  const a = player.attrs;
+  ctx.fillStyle = '#d7c98a'; ctx.fillText(`${player.class ? player.class.name + '  ·  ' : ''}STR ${a.STR}  AGI ${a.AGI}  INT ${a.INT}`, 16, 82);
+  ctx.fillStyle = '#cfd4dc';
+  ctx.fillText(`AtkDmg ${player.stats.attackDamage}  AtkSpd ${player.stats.attacksPerSec.toFixed(2)}/s  ARM ${player.stats.armor}  [${player.weapon.key}${player.weapon.ranged ? ' · ranged' : ''}]`, 16, 98);
+
+  ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'right';
+  ctx.fillStyle = game.isBoss ? '#ffb35c' : '#cfd4dc'; ctx.fillText(`Level ${game.level}${game.isBoss ? ' · BOSS' : ''}`, W - 34, 26);
+  ctx.fillStyle = '#cfd4dc'; ctx.fillText(`Enemies: ${enemies.length + spawnQueue.length}   Items: ${player.inventory.length} (I)`, W - 34, 46);
+  ctx.textAlign = 'start';
+
+  const bx = 16, by = H - 62, sz = 46, gap = 8;
+  KEY_ORDER.forEach((key, i) => {
+    const x = bx + i * (sz + gap);
+    const inst = player.spells[i];
+    ctx.fillStyle = '#0e1116'; ctx.fillRect(x, by, sz, sz);
+    if (!inst) {
+      ctx.strokeStyle = '#242830'; ctx.lineWidth = 2; ctx.strokeRect(x, by, sz, sz);
+      ctx.fillStyle = '#3a3f48'; ctx.font = 'bold 15px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(key.toUpperCase(), x + sz/2, by + 22);
+      ctx.font = '8px sans-serif'; ctx.fillText('locked', x + sz/2, by + 34); ctx.textAlign = 'start'; return;
+    }
+    const def = SPELL_LIB[inst.id]; const affordable = player.mana >= def.cost;
+    ctx.strokeStyle = affordable ? def.color : '#3a3f48'; ctx.lineWidth = 2; ctx.strokeRect(x, by, sz, sz);
+    ctx.fillStyle = affordable ? def.color : '#5a5f68'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(key.toUpperCase(), x + 12, by + 18);
+    ctx.fillStyle = '#ffe08a'; ctx.font = 'bold 9px sans-serif'; ctx.fillText(`L${inst.level}`, x + sz - 12, by + 16);
+    ctx.fillStyle = '#8f97a3'; ctx.font = '8px sans-serif'; ctx.fillText(def.name, x + sz/2, by + 33);
+    ctx.fillStyle = '#6fa8ff'; ctx.fillText(`${def.cost} mp`, x + sz/2, by + 43);
+    if (inst.cd > 0) { const frac = inst.cd / spellCooldown(inst, def); ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(x, by + sz*(1-frac), sz, sz*frac); }
+    ctx.textAlign = 'start';
+  });
+}
+
+function drawInventory() {
+  invRects = [];
+  const pw = 330, px = W - pw - 26, py = 52, ph = H - 130;
+  invPanel.x = px; invPanel.y = py; invPanel.w = pw; invPanel.h = ph;
+  ctx.fillStyle = 'rgba(10,12,16,.94)'; ctx.fillRect(px, py, pw, ph);
+  ctx.strokeStyle = '#3a4150'; ctx.lineWidth = 2; ctx.strokeRect(px, py, pw, ph);
+  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 15px sans-serif'; ctx.fillText('Equipped', px + 14, py + 24);
+  ctx.fillStyle = '#f2c14e'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'right'; ctx.fillText('PAUSED · press I to resume', px + pw - 14, py + 24); ctx.textAlign = 'start';
+  ctx.font = '12px sans-serif';
+  let yy = py + 42;
+  for (const slot of SLOTS) {
+    const it = player.equipped[slot];
+    invRects.push({ x: px + 8, y: yy - 12, w: pw - 16, h: 18, kind: 'slot', ref: slot });
+    ctx.fillStyle = '#6b7280'; ctx.fillText(slot, px + 14, yy);
+    if (it) { ctx.fillStyle = it.rarity.color; ctx.fillText(it.name, px + 96, yy);
+      ctx.fillStyle = '#9aa0a8'; ctx.textAlign = 'right'; ctx.fillText(itemStatText(it), px + pw - 14, yy); ctx.textAlign = 'start'; }
+    else { ctx.fillStyle = '#41474f'; ctx.fillText('— empty —', px + 96, yy); }
+    yy += 20;
+  }
+  yy += 10;
+  ctx.strokeStyle = '#2a2f38'; ctx.beginPath(); ctx.moveTo(px + 12, yy - 6); ctx.lineTo(px + pw - 12, yy - 6); ctx.stroke();
+  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 15px sans-serif'; ctx.fillText('Backpack  (click to equip)', px + 14, yy + 14);
+  ctx.font = '12px sans-serif'; yy += 34;
+  if (player.inventory.length === 0) { ctx.fillStyle = '#7f8794'; ctx.fillText('Empty — go kill things.', px + 14, yy); }
+  const maxRows = Math.floor((py + ph - yy - 10) / 20);
+  const list = player.inventory.slice(-maxRows);
+  for (const it of list) {
+    invRects.push({ x: px + 8, y: yy - 13, w: pw - 16, h: 18, kind: 'bag', ref: it });
+    ctx.fillStyle = it.rarity.color; ctx.fillText(`◆ ${it.name}`, px + 14, yy);
+    ctx.fillStyle = '#9aa0a8'; ctx.textAlign = 'right'; ctx.fillText(itemStatText(it), px + pw - 14, yy); ctx.textAlign = 'start';
+    yy += 20;
+  }
+}
+
+function itemStatText(it) {
+  let s = `+${it.value} ${it.stat}`;
+  if (it.bonusStat) s += `  +${it.bonusValue} ${it.bonusStat}`;
+  return s;
+}
+function handleInventoryClick() {
+  for (const r of invRects) {
+    if (mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h) {
+      if (r.kind === 'bag') equipItem(r.ref); else if (r.kind === 'slot') unequipSlot(r.ref); return true;
+    }
+  }
+  return mouse.x >= invPanel.x && mouse.x <= invPanel.x + invPanel.w && mouse.y >= invPanel.y && mouse.y <= invPanel.y + invPanel.h;
+}
+
+// --------------------------------------------------------------------
+//  CLASS-SELECT MENU
+// --------------------------------------------------------------------
+let menuRects = [];
+function wrapText(text, cx, y, maxW, lh) {
+  const words = text.split(' '); let line = '';
+  for (const w of words) {
+    const test = line ? line + ' ' + w : w;
+    if (ctx.measureText(test).width > maxW && line) { ctx.fillText(line, cx, y); line = w; y += lh; }
+    else line = test;
+  }
+  if (line) ctx.fillText(line, cx, y);
+}
+function drawMenu() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#14161c'; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 32px sans-serif'; ctx.fillText('THE GAME', W / 2, 84);
+  ctx.fillStyle = '#9aa0a8'; ctx.font = '15px sans-serif'; ctx.fillText('Choose your class', W / 2, 112);
+
+  menuRects = [];
+  const cw = 230, ch = 290, gap = 26;
+  const total = CLASSES.length * cw + (CLASSES.length - 1) * gap;
+  const x0 = (W - total) / 2, y0 = 150;
+  CLASSES.forEach((c, i) => {
+    const x = x0 + i * (cw + gap);
+    menuRects.push({ x, y: y0, w: cw, h: ch, cls: c });
+    const hover = mouse.x >= x && mouse.x <= x + cw && mouse.y >= y0 && mouse.y <= y0 + ch;
+    ctx.fillStyle = hover ? '#20242e' : '#191c24'; ctx.fillRect(x, y0, cw, ch);
+    ctx.strokeStyle = c.color; ctx.lineWidth = hover ? 3 : 2; ctx.strokeRect(x, y0, cw, ch);
+    ctx.fillStyle = c.color; ctx.beginPath(); ctx.arc(x + cw / 2, y0 + 66, 32, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 22px sans-serif'; ctx.fillText(c.name, x + cw / 2, y0 + 130);
+    ctx.fillStyle = c.color; ctx.font = 'bold 13px sans-serif'; ctx.fillText(`Primary: ${c.primary}`, x + cw / 2, y0 + 154);
+    ctx.fillStyle = '#9aa0a8'; ctx.font = '12px sans-serif'; wrapText(c.desc, x + cw / 2, y0 + 182, cw - 34, 16);
+    ctx.fillStyle = '#6b7280'; ctx.font = '11px sans-serif'; ctx.fillText(`Starts with: ${c.startWeapon}`, x + cw / 2, y0 + ch - 20);
+  });
+  ctx.fillStyle = '#7f8794'; ctx.font = '13px sans-serif'; ctx.fillText('Click a class to begin', W / 2, y0 + ch + 40);
+  ctx.textAlign = 'start';
+}
+function handleMenuClick() {
+  for (const r of menuRects) {
+    if (mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h) { startRun(r.cls); return; }
+  }
+}
+
+// --------------------------------------------------------------------
+//  START
+// --------------------------------------------------------------------
+recomputeStats();
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+loop();
+</script>
+</body>
+</html>
