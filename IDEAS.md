@@ -4,6 +4,10 @@ _Running list of what to build next. Add anything anytime; check items off as th
 _2D top-down ARPG (Diablo/PoE-like), single file: `game.html`._
 
 ## Up next (priority order)
+- [ ] **Free-placement movement on touch** — don't lock the joystick to the left half. Two variants to consider:
+  - **(preferred)** *Floating joystick*: it spawns wherever you touch (anywhere except on the action buttons), so either thumb / any position works. Keeps analog precision.
+  - *Tap-to-move*: tap a spot and the character walks there. Simpler, but conflicts with the right-side buttons and is less precise in dense fights.
+  - Ideally offer a toggle in Settings so the player picks.
 - [ ] **Cap health potions** — limit how many health potions you can carry/pick up (e.g. a max stack); extra pickups wasted or converted. Reins in sustain.
 - [ ] **Upgrade / combine items** — combine 3 items of the same rarity (e.g. 3 Rare) into 1 item of the next rarity up, with randomly rolled stats. A crafting/gambling sink for duplicate loot.
 - [ ] **Rune reroll currency** — from PoE: a currency/item that rerolls an item's stats (or a room's rewards) so you can chase better rolls instead of accepting bad ones. (Harvested from the "Rune reroll currency" chat.)
