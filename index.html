@@ -100,8 +100,14 @@ function rollRarity(minIdx = 0) {
   if (idx < minIdx) idx = minIdx;
   return RARITIES[idx];
 }
+// Rolls a critical-strike affix: either Crit chance (%) or Crit damage (%).
+function critAffix(rarIdx) {
+  if (Math.random() < 0.5) return { stat: 'Crit',    value: Math.max(1, Math.round((2 + Math.random() * 4) * (0.8 + 0.12 * rarIdx))) };
+  return                        { stat: 'CritDmg', value: Math.round((10 + Math.random() * 18) * (0.8 + 0.12 * rarIdx)) };
+}
 function makeItem(minIdx = 0) {
   const rar = rollRarity(minIdx);
+  const rarIdx = RARITIES.indexOf(rar);
   const t = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
   const scale = 3 + Math.floor(Math.random() * 6) + Math.floor(game.level * 0.8);
   const item = { name: `${rar.name} ${t.type}`, rarity: rar, slot: t.slot };
@@ -111,9 +117,12 @@ function makeItem(minIdx = 0) {
     item.stat = 'AtkDmg';
     item.value = Math.round((wd.base + scale) * rar.mult);
     if (wd.attr) { item.bonusStat = wd.attr; item.bonusValue = Math.max(1, Math.round(scale * 0.5 * rar.mult)); }
+    // Weapons can also roll a crit affix (more likely on higher rarities)
+    if (Math.random() < 0.28 + 0.09 * rarIdx) { const c = critAffix(rarIdx); item.bonusStat2 = c.stat; item.bonusValue2 = c.value; }
   } else if (t.stat === 'ATTR') {
-    item.stat = ATTRS[Math.floor(Math.random() * ATTRS.length)];
-    item.value = Math.round(scale * rar.mult);
+    // Jewelry: an attribute, or sometimes a crit stat instead
+    if (Math.random() < 0.4) { const c = critAffix(rarIdx); item.stat = c.stat; item.value = c.value; }
+    else { item.stat = ATTRS[Math.floor(Math.random() * ATTRS.length)]; item.value = Math.round(scale * rar.mult); }
   } else {
     item.stat = t.stat;
     item.value = Math.round(scale * rar.mult);
@@ -227,13 +236,13 @@ const player = {
   weapon: { key: 'fist', ranged: false, arc: WEAPONS.fist.arc, reach: WEAPONS.fist.reach, color: WEAPONS.fist.color },
   inventory: [],
   equipped: { Weapon: null, 'Off-hand': null, Helm: null, Amulet: null, Ring1: null, Ring2: null, Boots: null },
-  stats: { attackDamage: BASE.punch, armor: 0, attacksPerSec: 2.7 },
+  stats: { attackDamage: BASE.punch, armor: 0, attacksPerSec: 2.7, critChance: 0.05, critDamage: 1.5 },
 };
 const POTION_HEAL = 45, POTION_MANA = 55;
 
 function recomputeStats() {
   // gather attributes + flat bonuses from gear
-  let STR = 0, AGI = 0, INT = 0, armor = 0, speedBonus = 0, weaponDamage = 0;
+  let STR = 0, AGI = 0, INT = 0, armor = 0, speedBonus = 0, weaponDamage = 0, critChance = 0, critDmg = 0;
   for (const slot of SLOTS) {
     const it = player.equipped[slot]; if (!it) continue;
     if (it.stat === 'STR') STR += it.value;
@@ -242,9 +251,13 @@ function recomputeStats() {
     else if (it.stat === 'Armor') armor += it.value;
     else if (it.stat === 'Speed') speedBonus += it.value;
     else if (it.stat === 'AtkDmg') weaponDamage += it.value;
+    else if (it.stat === 'Crit') critChance += it.value;
+    else if (it.stat === 'CritDmg') critDmg += it.value;
     if (it.bonusStat === 'STR') STR += it.bonusValue;
     else if (it.bonusStat === 'AGI') AGI += it.bonusValue;
     else if (it.bonusStat === 'INT') INT += it.bonusValue;
+    if (it.bonusStat2 === 'Crit') critChance += it.bonusValue2;
+    else if (it.bonusStat2 === 'CritDmg') critDmg += it.bonusValue2;
   }
   if (player.class) { STR += player.class.base.STR; AGI += player.class.base.AGI; INT += player.class.base.INT; }
   player.attrs = { STR, AGI, INT };
@@ -287,6 +300,10 @@ function recomputeStats() {
 
   // Move speed
   player.speed = BASE.speed + speedBonus * 0.06;
+
+  // Critical strike: base 5% chance, 150% damage; gear adds to both (chance capped at 75%).
+  player.stats.critChance = clamp(0.05 + critChance / 100, 0, 0.75);
+  player.stats.critDamage = 1.5 + critDmg / 100;
 }
 
 function equipItem(item) {
@@ -357,63 +374,64 @@ function castSpell(i) {
   const def = SPELL_LIB[inst.id];
   if (player.mana < def.cost) { player.manaFlash = 10; return; }
   player.mana -= def.cost; inst.cd = spellCooldown(inst, def);
-  castEffect(def, spellDamage(inst, def));
+  const roll = rollCrit(spellDamage(inst, def));
+  castEffect(def, roll.dmg, roll.crit);
 }
 
 // ---- effect helpers ----
-function fireArrow(angle, dmg, color, pierce, speed) {
+function fireArrow(angle, dmg, color, pierce, speed, crit) {
   const sp = speed || 9;
   projectiles.push({ x: player.x + Math.cos(angle) * 18, y: player.y + Math.sin(angle) * 18,
     vx: Math.cos(angle) * sp, vy: Math.sin(angle) * sp, life: pierce ? 95 : 80, r: 4,
-    dmg, color, kind: pierce ? 'pierce' : 'arrow', hitSet: pierce ? new Set() : null });
+    dmg, crit, color: crit ? '#ffd35c' : color, kind: pierce ? 'pierce' : 'arrow', hitSet: pierce ? new Set() : null });
 }
-function effectArc(color, dmg, reach, arc) {
-  attack.active = true; attack.t = 0; attack.dir = player.facing; attack.arc = arc; attack.reach = reach; attack.color = color;
+function effectArc(color, dmg, reach, arc, crit) {
+  attack.active = true; attack.t = 0; attack.dir = player.facing; attack.arc = arc; attack.reach = reach; attack.color = crit ? '#ffd35c' : color;
   for (const e of enemies) { if (e.dead) continue;
     const dx = e.x - player.x, dy = e.y - player.y, dist = Math.hypot(dx, dy); if (dist > reach + e.radius) continue;
     const ang = Math.atan2(dy, dx);
-    if (Math.abs(normalizeAngle(ang - player.facing)) <= arc / 2) { const kb = e.boss ? 4 : 14; e.x += Math.cos(ang) * kb; e.y += Math.sin(ang) * kb; hurtEnemy(e, dmg); } }
+    if (Math.abs(normalizeAngle(ang - player.facing)) <= arc / 2) { const kb = e.boss ? 4 : 14; e.x += Math.cos(ang) * kb; e.y += Math.sin(ang) * kb; hurtEnemy(e, dmg, crit); } }
 }
-function effectRing(color, dmg, R, slow) {
+function effectRing(color, dmg, R, slow, crit) {
   fx.push({ kind: 'nova', x: player.x, y: player.y, r: R, life: 22, maxLife: 22, color });
-  for (const e of enemies) { if (e.dead) continue; if (Math.hypot(e.x - player.x, e.y - player.y) < R + e.radius) { hurtEnemy(e, dmg); if (slow) e.slowT = 150; } }
+  for (const e of enemies) { if (e.dead) continue; if (Math.hypot(e.x - player.x, e.y - player.y) < R + e.radius) { hurtEnemy(e, dmg, crit); if (slow) e.slowT = 150; } }
 }
-function effectLeap(color, dmg) {
+function effectLeap(color, dmg, crit) {
   const tx = clamp(mouse.x, ROOM.left + player.radius, ROOM.right - player.radius), ty = clamp(mouse.y, ROOM.top + player.radius, ROOM.bottom - player.radius);
   player.x = tx; player.y = ty;
   fx.push({ kind: 'boom', x: tx, y: ty, r: 92, life: 18, maxLife: 18, color });
-  damageInRadius(tx, ty, 92, dmg);
+  damageInRadius(tx, ty, 92, dmg, crit);
 }
-function effectChain(color, dmg) {
+function effectChain(color, dmg, crit) {
   let src = { x: player.x, y: player.y }; let pool = enemies.filter(e => !e.dead);
   for (let i = 0; i < 4; i++) {
     let best = null, bd = 1e9; const range = i === 0 ? 360 : 160;
     for (const e of pool) { const d = Math.hypot(e.x - src.x, e.y - src.y); if (d < range && d < bd) { bd = d; best = e; } }
     if (!best) break;
     fx.push({ kind: 'bolt', x1: src.x, y1: src.y, x2: best.x, y2: best.y, life: 10, color });
-    hurtEnemy(best, dmg * (1 - i * 0.15)); pool = pool.filter(e => e !== best); src = { x: best.x, y: best.y };
+    hurtEnemy(best, Math.round(dmg * (1 - i * 0.15)), crit); pool = pool.filter(e => e !== best); src = { x: best.x, y: best.y };
   }
   if (enemies.filter(e => !e.dead).length === 0) fx.push({ kind: 'bolt', x1: player.x, y1: player.y, x2: mouse.x, y2: mouse.y, life: 10, color });
 }
-function spawnMeteor(dmg, R, color) {
+function spawnMeteor(dmg, R, color, crit) {
   const tx = clamp(mouse.x, ROOM.left + 20, ROOM.right - 20), ty = clamp(mouse.y, ROOM.top + 20, ROOM.bottom - 20);
-  meteors.push({ x: tx, y: ty, timer: 34, r: R, dmg, color });
+  meteors.push({ x: tx, y: ty, timer: 34, r: R, dmg, crit, color });
 }
-function castEffect(def, dmg) {
+function castEffect(def, dmg, crit) {
   switch (def.kind) {
-    case 'cleave': effectArc(def.color, dmg, 96, 1.8); break;
-    case 'whirl':  effectRing(def.color, dmg, 86, false); break;
-    case 'ring':   effectRing(def.color, dmg, 128, false); break;
-    case 'leap':   effectLeap(def.color, dmg); break;
-    case 'spread': [-0.24, 0, 0.24].forEach(o => fireArrow(player.facing + o, dmg, def.color, false)); break;
-    case 'burst':  for (let i = 0; i < 5; i++) fireArrow(player.facing + (Math.random() - 0.5) * 0.2, dmg, def.color, false, 9 + Math.random() * 2); break;
-    case 'pierce': fireArrow(player.facing, dmg, def.color, true, 11); break;
-    case 'rain':   spawnMeteor(dmg, 82, def.color); break;
+    case 'cleave': effectArc(def.color, dmg, 96, 1.8, crit); break;
+    case 'whirl':  effectRing(def.color, dmg, 86, false, crit); break;
+    case 'ring':   effectRing(def.color, dmg, 128, false, crit); break;
+    case 'leap':   effectLeap(def.color, dmg, crit); break;
+    case 'spread': [-0.24, 0, 0.24].forEach(o => fireArrow(player.facing + o, dmg, def.color, false, undefined, crit)); break;
+    case 'burst':  for (let i = 0; i < 5; i++) fireArrow(player.facing + (Math.random() - 0.5) * 0.2, dmg, def.color, false, 9 + Math.random() * 2, crit); break;
+    case 'pierce': fireArrow(player.facing, dmg, def.color, true, 11, crit); break;
+    case 'rain':   spawnMeteor(dmg, 82, def.color, crit); break;
     case 'fireball': projectiles.push({ x: player.x + Math.cos(player.facing) * 20, y: player.y + Math.sin(player.facing) * 20,
-      vx: Math.cos(player.facing) * 7.2, vy: Math.sin(player.facing) * 7.2, life: 80, r: 7, dmg, splash: 46, color: def.color, kind: 'fireball' }); break;
-    case 'nova':   effectRing(def.color, dmg, 118, true); break;
-    case 'chain':  effectChain(def.color, dmg); break;
-    case 'meteor': spawnMeteor(dmg, 94, def.color); break;
+      vx: Math.cos(player.facing) * 7.2, vy: Math.sin(player.facing) * 7.2, life: 80, r: 7, dmg, crit, splash: 46, color: def.color, kind: 'fireball' }); break;
+    case 'nova':   effectRing(def.color, dmg, 118, true, crit); break;
+    case 'chain':  effectChain(def.color, dmg, crit); break;
+    case 'meteor': spawnMeteor(dmg, 94, def.color, crit); break;
   }
 }
 
@@ -442,16 +460,17 @@ const attack = { active: false, t: 0, duration: 12, cooldown: 0, cooldownMax: 20
 function tryAttack() {
   if (game.menu || game.over || showInv || attack.cooldown > 0) return;
   attack.cooldown = attack.cooldownMax;
+  const roll = rollCrit(player.stats.attackDamage);
   if (player.weapon.ranged) {
     // Bow: fire an arrow toward the cursor
     const sp = 9;
     projectiles.push({ x: player.x + Math.cos(player.facing) * 18, y: player.y + Math.sin(player.facing) * 18,
       vx: Math.cos(player.facing) * sp, vy: Math.sin(player.facing) * sp, life: 70, r: 4,
-      dmg: player.stats.attackDamage, color: player.weapon.color, kind: 'arrow' });
+      dmg: roll.dmg, crit: roll.crit, color: roll.crit ? '#ffd35c' : player.weapon.color, kind: 'arrow' });
   } else {
     // Melee: animated swing arc, damages everything in the arc now
     attack.active = true; attack.t = 0; attack.dir = player.facing;
-    attack.arc = player.weapon.arc; attack.reach = player.weapon.reach; attack.color = player.weapon.color;
+    attack.arc = player.weapon.arc; attack.reach = player.weapon.reach; attack.color = roll.crit ? '#ffd35c' : player.weapon.color;
     for (const e of enemies) {
       if (e.dead) continue;
       const dx = e.x - player.x, dy = e.y - player.y, dist = Math.hypot(dx, dy);
@@ -459,7 +478,7 @@ function tryAttack() {
       const ang = Math.atan2(dy, dx);
       if (Math.abs(normalizeAngle(ang - attack.dir)) <= attack.arc / 2) {
         const kb = e.boss ? 3 : 10; e.x += Math.cos(ang) * kb; e.y += Math.sin(ang) * kb;
-        hurtEnemy(e, player.stats.attackDamage);
+        hurtEnemy(e, roll.dmg, roll.crit);
       }
     }
   }
@@ -468,9 +487,18 @@ function tryAttack() {
 // --------------------------------------------------------------------
 //  ENEMY DAMAGE + DEATH + DROPS
 // --------------------------------------------------------------------
-function hurtEnemy(e, dmg) {
+// Rolls a crit against the player's current crit stats. Returns final damage + crit flag.
+function rollCrit(base) {
+  const crit = Math.random() < player.stats.critChance;
+  return { dmg: Math.round(crit ? base * player.stats.critDamage : base), crit };
+}
+function popDmg(x, y, amount, crit) {
+  fx.push({ kind: 'dmgtext', x, y, text: String(amount), crit: !!crit, life: 42, maxLife: 42 });
+}
+function hurtEnemy(e, dmg, crit) {
   if (e.dead) return;
   e.hp -= dmg; e.hitFlash = 8;
+  popDmg(e.x, e.y - e.radius - 4, dmg, crit);
   if (e.hp <= 0) { e.dead = true; game.kills++; dropForEnemy(e); }
 }
 function dropForEnemy(e) {
@@ -485,8 +513,8 @@ function dropForEnemy(e) {
     if (Math.random() < 0.03) addTome(e.x, e.y); // rare spell tome from mobs
   }
 }
-function damageInRadius(x, y, r, dmg) {
-  for (const e of enemies) { if (e.dead) continue; if (Math.hypot(e.x - x, e.y - y) < r + e.radius) hurtEnemy(e, dmg); }
+function damageInRadius(x, y, r, dmg, crit) {
+  for (const e of enemies) { if (e.dead) continue; if (Math.hypot(e.x - x, e.y - y) < r + e.radius) hurtEnemy(e, dmg, crit); }
 }
 
 // --------------------------------------------------------------------
@@ -619,22 +647,22 @@ function update() {
   for (const p of projectiles) {
     p.x += p.vx; p.y += p.vy; p.life--;
     if (p.kind === 'pierce') {
-      for (const e of enemies) { if (e.dead || p.hitSet.has(e)) continue; if (Math.hypot(e.x - p.x, e.y - p.y) < e.radius + p.r) { p.hitSet.add(e); hurtEnemy(e, p.dmg); } }
+      for (const e of enemies) { if (e.dead || p.hitSet.has(e)) continue; if (Math.hypot(e.x - p.x, e.y - p.y) < e.radius + p.r) { p.hitSet.add(e); hurtEnemy(e, p.dmg, p.crit); } }
       if (!inRoom(p.x, p.y) || p.life <= 0) p.dead = true;
       continue;
     }
     let hitE = null;
     for (const e of enemies) { if (e.dead) continue; if (Math.hypot(e.x - p.x, e.y - p.y) < e.radius + p.r) { hitE = e; break; } }
     if (hitE || !inRoom(p.x, p.y) || p.life <= 0) {
-      if (p.kind === 'fireball') { fx.push({ kind: 'boom', x: p.x, y: p.y, r: p.splash, life: 16, maxLife: 16, color: p.color }); damageInRadius(p.x, p.y, p.splash, p.dmg); }
-      else if (p.kind === 'arrow' && hitE) hurtEnemy(hitE, p.dmg);
+      if (p.kind === 'fireball') { fx.push({ kind: 'boom', x: p.x, y: p.y, r: p.splash, life: 16, maxLife: 16, color: p.color }); damageInRadius(p.x, p.y, p.splash, p.dmg, p.crit); }
+      else if (p.kind === 'arrow' && hitE) hurtEnemy(hitE, p.dmg, p.crit);
       p.dead = true;
     }
   }
   projectiles = projectiles.filter(p => !p.dead);
 
   // Meteors
-  for (const m of meteors) { m.timer--; if (m.timer <= 0) { fx.push({ kind: 'boom', x: m.x, y: m.y, r: m.r, life: 20, maxLife: 20, color: m.color }); damageInRadius(m.x, m.y, m.r, m.dmg); m.done = true; } }
+  for (const m of meteors) { m.timer--; if (m.timer <= 0) { fx.push({ kind: 'boom', x: m.x, y: m.y, r: m.r, life: 20, maxLife: 20, color: m.color }); damageInRadius(m.x, m.y, m.r, m.dmg, m.crit); m.done = true; } }
   meteors = meteors.filter(m => !m.done);
 
   for (const f of fx) f.life--; fx = fx.filter(f => f.life > 0);
@@ -757,6 +785,12 @@ function draw() {
     else if (f.kind === 'bolt') { ctx.strokeStyle = f.color; ctx.lineWidth = 2 + 2*t; ctx.globalAlpha = 0.5 + 0.5*t;
       ctx.beginPath(); ctx.moveTo(f.x1, f.y1); const mx2=(f.x1+f.x2)/2+(Math.random()-0.5)*16, my2=(f.y1+f.y2)/2+(Math.random()-0.5)*16; ctx.lineTo(mx2,my2); ctx.lineTo(f.x2, f.y2); ctx.stroke(); ctx.globalAlpha = 1; }
     else if (f.kind === 'toast') { ctx.globalAlpha = clamp(f.life / 45, 0, 1); ctx.fillStyle = '#ffe08a'; ctx.font = 'bold 17px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(f.text, W / 2, 138); ctx.textAlign = 'start'; ctx.globalAlpha = 1; }
+    else if (f.kind === 'dmgtext') {
+      const rise = (1 - t) * 24; ctx.globalAlpha = clamp(t * 1.3, 0, 1); ctx.textAlign = 'center';
+      if (f.crit) { ctx.fillStyle = '#ffd35c'; ctx.font = 'bold 18px sans-serif'; ctx.fillText(f.text + '!', f.x, f.y - rise); }
+      else { ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 12px sans-serif'; ctx.fillText(f.text, f.x, f.y - rise); }
+      ctx.textAlign = 'start'; ctx.globalAlpha = 1;
+    }
   }
 
   // Melee swing animation
@@ -846,6 +880,8 @@ function drawHUD() {
   ctx.fillStyle = '#d7c98a'; ctx.fillText(`${player.class ? player.class.name + '  ·  ' : ''}STR ${a.STR}  AGI ${a.AGI}  INT ${a.INT}`, 16, 82);
   ctx.fillStyle = '#cfd4dc';
   ctx.fillText(`AtkDmg ${player.stats.attackDamage}  AtkSpd ${player.stats.attacksPerSec.toFixed(2)}/s  ARM ${player.stats.armor}  [${player.weapon.key}${player.weapon.ranged ? ' · ranged' : ''}]`, 16, 98);
+  ctx.fillStyle = '#ffcf5c';
+  ctx.fillText(`Crit ${Math.round(player.stats.critChance * 100)}%  ·  Crit Dmg ${Math.round(player.stats.critDamage * 100)}%`, 16, 114);
 
   ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'right';
   ctx.fillStyle = game.isBoss ? '#ffb35c' : '#cfd4dc'; ctx.fillText(`Level ${game.level}${game.isBoss ? ' · BOSS' : ''}`, W - 34, 26);
@@ -908,9 +944,15 @@ function drawInventory() {
   }
 }
 
+function statLabel(stat, val) {
+  if (stat === 'Crit') return `+${val}% Crit`;
+  if (stat === 'CritDmg') return `+${val}% Crit Dmg`;
+  return `+${val} ${stat}`;
+}
 function itemStatText(it) {
-  let s = `+${it.value} ${it.stat}`;
-  if (it.bonusStat) s += `  +${it.bonusValue} ${it.bonusStat}`;
+  let s = statLabel(it.stat, it.value);
+  if (it.bonusStat) s += `  ${statLabel(it.bonusStat, it.bonusValue)}`;
+  if (it.bonusStat2) s += `  ${statLabel(it.bonusStat2, it.bonusValue2)}`;
   return s;
 }
 function handleInventoryClick() {

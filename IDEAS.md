@@ -15,6 +15,7 @@ _2D top-down ARPG (Diablo/PoE-like), single file: `game.html`._
 - [ ] **Hidden rooms** — secret rooms with extra loot to discover
 
 ## Done
+- [x] **Critical strike** — Crit chance + Crit damage stats (base 5% / 150%); rolls as affix on weapons & jewelry; applies to weapon attacks AND spells; gold floating damage numbers on crit.
 - [x] **Settings + rebindable keybinds** — Esc opens Settings; rebind spells/potions/inventory to any key, saved across sessions.
 - [x] **Spell levels** — spell tomes level spells (+25% dmg, shorter cooldown); per-class spellbooks on Q/W/E/R
 - [x] 3 classes: Warrior / Hunter / Mage, each with own primary stat and spellbook
