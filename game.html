@@ -2,14 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>The Game — Prototype 0.8</title>
 <style>
   html, body { margin: 0; height: 100%; background: #14161c; color: #cfd4dc; font-family: -apple-system, Segoe UI, Roboto, sans-serif; overflow: hidden; }
   #wrap { display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: center; gap: 10px; }
-  canvas { background: #1c2029; border: 1px solid #2c313c; border-radius: 6px; box-shadow: 0 10px 40px rgba(0,0,0,.4); cursor: crosshair; }
+  canvas { background: #1c2029; border: 1px solid #2c313c; border-radius: 6px; box-shadow: 0 10px 40px rgba(0,0,0,.4); cursor: crosshair; touch-action: none; }
   #hud { font-size: 13px; color: #7f8794; letter-spacing: .3px; }
   #hud b { color: #cfd4dc; }
+  /* On touch devices: fill the screen and hide the desktop controls hint */
+  @media (pointer: coarse) {
+    #wrap { gap: 0; }
+    #hud { display: none; }
+    canvas { border: none; border-radius: 0; }
+  }
 </style>
 </head>
 <body>
@@ -197,10 +203,12 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
-canvas.addEventListener('mousemove', e => {
+// Map a screen (client) point to internal canvas coordinates, accounting for CSS scaling.
+function canvasPos(clientX, clientY) {
   const r = canvas.getBoundingClientRect();
-  mouse.x = e.clientX - r.left; mouse.y = e.clientY - r.top;
-});
+  return { x: (clientX - r.left) * (W / r.width), y: (clientY - r.top) * (H / r.height) };
+}
+canvas.addEventListener('mousemove', e => { const p = canvasPos(e.clientX, e.clientY); mouse.x = p.x; mouse.y = p.y; });
 canvas.addEventListener('mousedown', e => {
   if (game.menu) { if (e.button === 0) handleMenuClick(); return; }
   if (settingsOpen) { if (e.button === 0) handleSettingsClick(); return; }
@@ -216,6 +224,99 @@ canvas.addEventListener('mousedown', e => {
   tryAttack();
 });
 canvas.addEventListener('mouseup', e => { if (e.button === 2) mouse.rightDown = false; else mouse.leftDown = false; });
+
+// --------------------------------------------------------------------
+//  TOUCH CONTROLS (phones/tablets) — virtual joystick + on-screen buttons
+// --------------------------------------------------------------------
+const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+let touchMove = { x: 0, y: 0, active: false };
+let joyId = null, joyOrigin = { x: 0, y: 0 }, joyKnob = { x: 0, y: 0 };
+let touchAttack = false;
+const touchRoles = {}; // touch identifier -> role string
+
+// Round action buttons on the right; positions in internal canvas coords.
+function touchButtons() {
+  return [
+    { id: 'attack',   x: 835, y: 466, r: 46 },
+    { id: 'potionH',  x: 690, y: 372, r: 22 },
+    { id: 'potionM',  x: 752, y: 372, r: 22 },
+    { id: 'inv',      x: 866, y: 150, r: 22 },
+    { id: 'settings', x: 866, y: 100, r: 22 },
+  ];
+}
+function spellBtn(i) {
+  const gx = [690, 752, 690, 752][i], gy = [430, 430, 492, 492][i];
+  return { x: gx, y: gy, r: 28 };
+}
+function resizeCanvas() {
+  const padW = isTouch ? 0 : 24, padH = isTouch ? 0 : 64;
+  const scale = Math.min((window.innerWidth - padW) / W, (window.innerHeight - padH) / H);
+  canvas.style.width = (W * scale) + 'px';
+  canvas.style.height = (H * scale) + 'px';
+}
+window.addEventListener('resize', resizeCanvas);
+window.addEventListener('orientationchange', resizeCanvas);
+
+if (isTouch) {
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      const p = canvasPos(t.clientX, t.clientY);
+      if (game.menu) { mouse.x = p.x; mouse.y = p.y; handleMenuClick(); continue; }
+      if (game.over) { fullReset(); continue; }
+      if (settingsOpen) {
+        const pw = 380, ph = 372, px = (W - pw) / 2, py = (H - ph) / 2;
+        mouse.x = p.x; mouse.y = p.y;
+        if (p.x >= px && p.x <= px + pw && p.y >= py && p.y <= py + ph) handleSettingsClick();
+        else settingsOpen = false;
+        continue;
+      }
+      if (showInv) { mouse.x = p.x; mouse.y = p.y; if (!handleInventoryClick()) showInv = false; continue; }
+      // Gameplay: buttons first, then joystick on the left half.
+      let hit = null;
+      for (const b of touchButtons()) { if (Math.hypot(p.x - b.x, p.y - b.y) <= b.r) { hit = b.id; break; } }
+      if (!hit) for (let i = 0; i < 4; i++) { const b = spellBtn(i); if (player.spells[i] && Math.hypot(p.x - b.x, p.y - b.y) <= b.r) { hit = 'spell' + i; break; } }
+      if (hit) {
+        touchRoles[t.identifier] = hit;
+        if (hit === 'attack') touchAttack = true;
+        else if (hit === 'potionH') drinkHealth();
+        else if (hit === 'potionM') drinkMana();
+        else if (hit === 'inv') showInv = !showInv;
+        else if (hit === 'settings') { settingsOpen = true; awaitingBind = null; }
+        else if (hit.startsWith('spell')) castSpell(+hit.slice(5));
+        continue;
+      }
+      if (joyId === null && p.x < W * 0.5) {
+        joyId = t.identifier; joyOrigin = { x: p.x, y: p.y }; joyKnob = { x: p.x, y: p.y };
+        touchMove.active = true; touchMove.x = 0; touchMove.y = 0; touchRoles[t.identifier] = 'joy';
+      }
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      if (t.identifier === joyId) {
+        const p = canvasPos(t.clientX, t.clientY);
+        let dx = p.x - joyOrigin.x, dy = p.y - joyOrigin.y; const d = Math.hypot(dx, dy), R = 60;
+        if (d > R) { dx = dx / d * R; dy = dy / d * R; }
+        joyKnob = { x: joyOrigin.x + dx, y: joyOrigin.y + dy };
+        touchMove.x = dx / R; touchMove.y = dy / R;
+      }
+    }
+  }, { passive: false });
+
+  const endTouch = e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      if (t.identifier === joyId) { joyId = null; touchMove.active = false; touchMove.x = 0; touchMove.y = 0; }
+      if (touchRoles[t.identifier] === 'attack') touchAttack = false;
+      delete touchRoles[t.identifier];
+    }
+  };
+  canvas.addEventListener('touchend', endTouch, { passive: false });
+  canvas.addEventListener('touchcancel', endTouch, { passive: false });
+}
 
 // --------------------------------------------------------------------
 //  GAME STATE
@@ -613,6 +714,7 @@ function update() {
   if (keys['arrowdown'])  my += 1;
   if (keys['arrowleft'])  mx -= 1;
   if (keys['arrowright']) mx += 1;
+  if (touchMove.active) { mx += touchMove.x; my += touchMove.y; }
   if (mx !== 0 || my !== 0) {
     moveTarget = null;
     const l = Math.hypot(mx, my); player.x += (mx/l)*player.speed; player.y += (my/l)*player.speed;
@@ -624,10 +726,18 @@ function update() {
     }
   }
   confine(player);
+
+  // Touch: no cursor, so auto-aim the virtual "mouse" at the nearest enemy (or ahead when moving).
+  if (isTouch) {
+    let ne = null, nd = 1e9;
+    for (const e of enemies) { if (e.dead) continue; const d = Math.hypot(e.x - player.x, e.y - player.y); if (d < nd) { nd = d; ne = e; } }
+    if (ne) { mouse.x = ne.x; mouse.y = ne.y; }
+    else { const ang = (mx !== 0 || my !== 0) ? Math.atan2(my, mx) : player.facing; mouse.x = player.x + Math.cos(ang) * 80; mouse.y = player.y + Math.sin(ang) * 80; }
+  }
   player.facing = Math.atan2(mouse.y - player.y, mouse.x - player.x);
 
-  // Auto-attack while holding left mouse
-  if (mouse.leftDown) tryAttack();
+  // Auto-attack while holding left mouse (or the touch attack button)
+  if (mouse.leftDown || touchAttack) tryAttack();
 
   // Resources / timers
   player.hp = Math.min(player.maxHp, player.hp + player.hpRegen);
@@ -830,6 +940,48 @@ function draw() {
     ctx.fillText('Press R or click to restart · C to change class', W/2, H/2 + 44); ctx.textAlign = 'start';
   }
   if (settingsOpen) drawSettings();
+  if (isTouch && !game.menu && !game.over && !showInv && !settingsOpen) drawTouchUI();
+  if (isTouch && window.innerHeight > window.innerWidth) {
+    ctx.fillStyle = 'rgba(0,0,0,.82)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#e8eef6'; ctx.textAlign = 'center'; ctx.font = 'bold 24px sans-serif';
+    ctx.fillText('↻  Rotate your phone', W / 2, H / 2 - 6);
+    ctx.fillStyle = '#9aa0a8'; ctx.font = '15px sans-serif'; ctx.fillText('Play in landscape (sideways)', W / 2, H / 2 + 22); ctx.textAlign = 'start';
+  }
+}
+
+// Draws the on-screen touch controls: joystick, attack, spells, potions, inventory, settings.
+function drawTouchUI() {
+  ctx.save();
+  if (touchMove.active) {
+    ctx.globalAlpha = 0.5; ctx.strokeStyle = '#9fd0ff'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(joyOrigin.x, joyOrigin.y, 60, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = 'rgba(159,208,255,.35)'; ctx.beginPath(); ctx.arc(joyKnob.x, joyKnob.y, 28, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  function roundBtn(x, y, r, label, color, sub) {
+    ctx.fillStyle = 'rgba(14,17,22,.72)'; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.font = 'bold ' + Math.round(r * 0.7) + 'px sans-serif'; ctx.fillText(label, x, y + r * 0.24);
+    if (sub) { ctx.fillStyle = '#9aa0a8'; ctx.font = '10px sans-serif'; ctx.fillText(sub, x, y + r * 0.85); }
+    ctx.textAlign = 'start';
+  }
+  roundBtn(835, 466, 46, '⚔', '#ff8a5c');
+  roundBtn(690, 372, 22, 'H', '#e2647a', 'x' + player.potions);
+  roundBtn(752, 372, 22, 'M', '#5a8fe2', 'x' + player.manaPotions);
+  roundBtn(866, 150, 22, 'I', '#cfd4dc');
+  roundBtn(866, 100, 22, '⚙', '#cfd4dc');
+  for (let i = 0; i < 4; i++) {
+    const b = spellBtn(i), inst = player.spells[i];
+    ctx.fillStyle = 'rgba(14,17,22,.72)'; ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill();
+    if (!inst) { ctx.strokeStyle = '#242830'; ctx.lineWidth = 2; ctx.stroke(); ctx.fillStyle = '#3a3f48'; ctx.font = '9px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('lock', b.x, b.y + 3); ctx.textAlign = 'start'; continue; }
+    const def = SPELL_LIB[inst.id], aff = player.mana >= def.cost;
+    ctx.strokeStyle = aff ? def.color : '#3a3f48'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = aff ? def.color : '#5a5f68'; ctx.textAlign = 'center'; ctx.font = '9px sans-serif'; ctx.fillText(def.name, b.x, b.y + 1);
+    ctx.fillStyle = '#ffe08a'; ctx.font = 'bold 8px sans-serif'; ctx.fillText('L' + inst.level, b.x, b.y + 12);
+    if (inst.cd > 0) { const fr = inst.cd / spellCooldown(inst, def); ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.arc(b.x, b.y, b.r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * fr); ctx.closePath(); ctx.fill(); }
+    ctx.textAlign = 'start';
+  }
+  ctx.restore();
 }
 
 function drawSettings() {
@@ -888,6 +1040,7 @@ function drawHUD() {
   ctx.fillStyle = '#cfd4dc'; ctx.fillText(`Enemies: ${enemies.length + spawnQueue.length}   Items: ${player.inventory.length} (I)`, W - 34, 46);
   ctx.textAlign = 'start';
 
+  if (isTouch) return; // on touch, spells are drawn as round buttons in drawTouchUI()
   const bx = 16, by = H - 62, sz = 46, gap = 8;
   [0, 1, 2, 3].forEach(i => {
     const key = spellKey(i);
@@ -1013,6 +1166,7 @@ function handleMenuClick() {
 //  START
 // --------------------------------------------------------------------
 recomputeStats();
+resizeCanvas();
 function loop() { update(); draw(); requestAnimationFrame(loop); }
 loop();
 </script>
