@@ -21,6 +21,7 @@
     <b>Spells:</b> Q W E R &nbsp;·&nbsp;
     <b>Potions:</b> 1 / 2 &nbsp;·&nbsp;
     <b>Inventory:</b> I &nbsp;·&nbsp;
+    <b>Settings:</b> Esc &nbsp;·&nbsp;
     <b>Restart:</b> R (dead)
   </div>
 </div>
@@ -129,19 +130,61 @@ let showInv = false;
 let invRects = [];
 let moveTarget = null;
 
+// ---- Keybinds (rebindable in the Settings screen, Esc) ----
+function defaultBinds() { return { spell0: 'q', spell1: 'w', spell2: 'e', spell3: 'r', health: '1', mana: '2', inventory: 'i' }; }
+let binds = defaultBinds();
+let settingsOpen = false, awaitingBind = null, settingsRects = [];
+const BIND_ROWS = [
+  { id: 'spell0', label: 'Spell 1' }, { id: 'spell1', label: 'Spell 2' },
+  { id: 'spell2', label: 'Spell 3' }, { id: 'spell3', label: 'Spell 4' },
+  { id: 'health', label: 'Health potion' }, { id: 'mana', label: 'Mana potion' },
+  { id: 'inventory', label: 'Inventory' },
+];
+function saveBinds() { try { localStorage.setItem('thegame_binds', JSON.stringify(binds)); } catch (e) {} }
+function loadBinds() { try { const s = localStorage.getItem('thegame_binds'); if (s) Object.assign(binds, JSON.parse(s)); } catch (e) {} }
+loadBinds();
+function spellKey(i) { return binds['spell' + i]; }
+function spellIndexForKey(k) { for (let i = 0; i < 4; i++) if (binds['spell' + i] === k) return i; return -1; }
+function keyDisplay(k) {
+  const map = { arrowup: '↑', arrowdown: '↓', arrowleft: '←', arrowright: '→', ' ': 'Space', escape: 'Esc' };
+  return map[k] || (k ? k.toUpperCase() : '—');
+}
+function assignBind(k) {
+  if (k === 'escape') { awaitingBind = null; return; }      // cancel rebind
+  for (const a in binds) { if (a !== awaitingBind && binds[a] === k) binds[a] = binds[awaitingBind]; } // swap to avoid dupes
+  binds[awaitingBind] = k; awaitingBind = null; saveBinds();
+}
+function handleSettingsClick() {
+  for (const r of settingsRects) {
+    if (mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h) {
+      if (r.id === '__reset') { binds = defaultBinds(); awaitingBind = null; saveBinds(); }
+      else awaitingBind = (awaitingBind === r.id ? null : r.id);
+      return;
+    }
+  }
+}
+
 window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   keys[k] = true;
   if (k.startsWith('arrow')) e.preventDefault();
-  if (e.key === ' ') { e.preventDefault(); tryAttack(); }
-  if (k === 'i') showInv = !showInv;
-  if (k === '1') drinkHealth();
-  if (k === '2') drinkMana();
-  if (k === 'c' && game.over) { game.menu = true; return; } // back to class select
-  if (k === 'q' || k === 'w' || k === 'e' || k === 'r') {
-    if (game.over && k === 'r') { fullReset(); return; }
-    castSpell(KEY_ORDER.indexOf(k));
+
+  // Settings screen captures input (and rebinding grabs the next key)
+  if (settingsOpen) {
+    if (awaitingBind) { assignBind(k); e.preventDefault(); return; }
+    if (k === 'escape') settingsOpen = false;
+    return;
   }
+  if (k === 'escape' && !game.menu) { settingsOpen = true; awaitingBind = null; return; }
+
+  if (e.key === ' ') { e.preventDefault(); tryAttack(); }
+  if (game.over && k === 'r') { fullReset(); return; }        // restart on death
+  if (k === 'c' && game.over) { game.menu = true; return; }   // back to class select
+  if (k === binds.inventory) showInv = !showInv;
+  if (k === binds.health) drinkHealth();
+  if (k === binds.mana) drinkMana();
+  const si = spellIndexForKey(k);
+  if (si >= 0) castSpell(si);
 });
 window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
@@ -151,6 +194,7 @@ canvas.addEventListener('mousemove', e => {
 });
 canvas.addEventListener('mousedown', e => {
   if (game.menu) { if (e.button === 0) handleMenuClick(); return; }
+  if (settingsOpen) { if (e.button === 0) handleSettingsClick(); return; }
   if (e.button === 2) { // right = move
     mouse.rightDown = true;
     if (!game.over && !showInv) moveTarget = { x: mouse.x, y: mouse.y };
@@ -383,7 +427,7 @@ function grantSpell() {
   const next = pool.find(id => !known.has(id));
   if (next && player.spells.length < 4) {
     player.spells.push({ id: next, level: 1, cd: 0 });
-    fx.push({ kind: 'toast', text: `New spell: ${SPELL_LIB[next].name}  (${KEY_ORDER[player.spells.length - 1].toUpperCase()})`, life: 150, maxLife: 150 });
+    fx.push({ kind: 'toast', text: `New spell: ${SPELL_LIB[next].name}  (${keyDisplay(spellKey(player.spells.length - 1))})`, life: 150, maxLife: 150 });
   } else {
     const s = player.spells[Math.floor(Math.random() * player.spells.length)];
     s.level++;
@@ -532,7 +576,7 @@ function fullReset() { startRun(player.class || CLASSES[0]); }
 //  UPDATE
 // --------------------------------------------------------------------
 function update() {
-  if (game.menu || game.over || showInv) return;
+  if (game.menu || game.over || showInv || settingsOpen) return;
   game.time++;
 
   // Movement: arrow keys override right-click move (WASD is free; W etc are spells)
@@ -751,6 +795,41 @@ function draw() {
     ctx.font = '16px sans-serif'; ctx.fillText(`Reached level ${game.level} · ${game.kills} kills`, W/2, H/2 + 16);
     ctx.fillText('Press R or click to restart · C to change class', W/2, H/2 + 44); ctx.textAlign = 'start';
   }
+  if (settingsOpen) drawSettings();
+}
+
+function drawSettings() {
+  settingsRects = [];
+  ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(0, 0, W, H);
+  const pw = 380, ph = 372, px = (W - pw) / 2, py = (H - ph) / 2;
+  ctx.fillStyle = 'rgba(12,14,20,.98)'; ctx.fillRect(px, py, pw, ph);
+  ctx.strokeStyle = '#3a4150'; ctx.lineWidth = 2; ctx.strokeRect(px, py, pw, ph);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 17px sans-serif'; ctx.fillText('Settings — Keybinds', px + 18, py + 30);
+  ctx.fillStyle = '#f2c14e'; ctx.font = '12px sans-serif'; ctx.textAlign = 'right'; ctx.fillText('Esc to close', px + pw - 16, py + 30); ctx.textAlign = 'left';
+  ctx.fillStyle = '#7f8794'; ctx.font = '11px sans-serif'; ctx.fillText('Click a row, then press the new key (Esc cancels).', px + 18, py + 50);
+  let yy = py + 80;
+  BIND_ROWS.forEach(row => {
+    const rx = px + 16, rw = pw - 32, rh = 30;
+    const hover = mouse.x >= rx && mouse.x <= rx + rw && mouse.y >= yy - 20 && mouse.y <= yy - 20 + rh;
+    const waiting = awaitingBind === row.id;
+    settingsRects.push({ x: rx, y: yy - 20, w: rw, h: rh, id: row.id });
+    ctx.fillStyle = waiting ? '#2a3550' : (hover ? '#20242e' : '#171a21'); ctx.fillRect(rx, yy - 20, rw, rh);
+    ctx.strokeStyle = '#2a2f38'; ctx.lineWidth = 1; ctx.strokeRect(rx, yy - 20, rw, rh);
+    let label = row.label;
+    const si = row.id.startsWith('spell') ? +row.id.slice(5) : -1;
+    if (si >= 0 && player.spells[si]) label = `Spell ${si + 1} · ${SPELL_LIB[player.spells[si].id].name}`;
+    ctx.fillStyle = '#cfd4dc'; ctx.font = '13px sans-serif'; ctx.fillText(label, rx + 12, yy - 1);
+    ctx.fillStyle = waiting ? '#ffe08a' : '#9fd0ff'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText(waiting ? 'press a key…' : keyDisplay(binds[row.id]), rx + rw - 12, yy - 1); ctx.textAlign = 'left';
+    yy += 36;
+  });
+  const bxr = px + 16, bwr = pw - 32, bhr = 30, byr = yy - 12;
+  const bhover = mouse.x >= bxr && mouse.x <= bxr + bwr && mouse.y >= byr && mouse.y <= byr + bhr;
+  settingsRects.push({ x: bxr, y: byr, w: bwr, h: bhr, id: '__reset' });
+  ctx.fillStyle = bhover ? '#3a2530' : '#241a1f'; ctx.fillRect(bxr, byr, bwr, bhr);
+  ctx.strokeStyle = '#7a4b5c'; ctx.lineWidth = 1; ctx.strokeRect(bxr, byr, bwr, bhr);
+  ctx.fillStyle = '#ff9a9a'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('Reset to defaults', px + pw / 2, byr + 20); ctx.textAlign = 'left';
 }
 
 function drawHUD() {
@@ -774,18 +853,19 @@ function drawHUD() {
   ctx.textAlign = 'start';
 
   const bx = 16, by = H - 62, sz = 46, gap = 8;
-  KEY_ORDER.forEach((key, i) => {
+  [0, 1, 2, 3].forEach(i => {
+    const key = spellKey(i);
     const x = bx + i * (sz + gap);
     const inst = player.spells[i];
     ctx.fillStyle = '#0e1116'; ctx.fillRect(x, by, sz, sz);
     if (!inst) {
       ctx.strokeStyle = '#242830'; ctx.lineWidth = 2; ctx.strokeRect(x, by, sz, sz);
-      ctx.fillStyle = '#3a3f48'; ctx.font = 'bold 15px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(key.toUpperCase(), x + sz/2, by + 22);
+      ctx.fillStyle = '#3a3f48'; ctx.font = 'bold 15px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(keyDisplay(key), x + sz/2, by + 22);
       ctx.font = '8px sans-serif'; ctx.fillText('locked', x + sz/2, by + 34); ctx.textAlign = 'start'; return;
     }
     const def = SPELL_LIB[inst.id]; const affordable = player.mana >= def.cost;
     ctx.strokeStyle = affordable ? def.color : '#3a3f48'; ctx.lineWidth = 2; ctx.strokeRect(x, by, sz, sz);
-    ctx.fillStyle = affordable ? def.color : '#5a5f68'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(key.toUpperCase(), x + 12, by + 18);
+    ctx.fillStyle = affordable ? def.color : '#5a5f68'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(keyDisplay(key), x + 12, by + 18);
     ctx.fillStyle = '#ffe08a'; ctx.font = 'bold 9px sans-serif'; ctx.fillText(`L${inst.level}`, x + sz - 12, by + 16);
     ctx.fillStyle = '#8f97a3'; ctx.font = '8px sans-serif'; ctx.fillText(def.name, x + sz/2, by + 33);
     ctx.fillStyle = '#6fa8ff'; ctx.fillText(`${def.cost} mp`, x + sz/2, by + 43);
