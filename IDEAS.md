@@ -4,6 +4,7 @@ _Running list of what to build next. Add anything anytime; check items off as th
 _2D top-down ARPG (Diablo/PoE-like), single file: `game.html`._
 
 ## Up next (priority order)
+- [ ] **Upgrade / combine items** — combine 3 items of the same rarity (e.g. 3 Rare) into 1 item of the next rarity up, with randomly rolled stats. A crafting/gambling sink for duplicate loot.
 - [ ] **Rune reroll currency** — from PoE: a currency/item that rerolls an item's stats (or a room's rewards) so you can chase better rolls instead of accepting bad ones. (Harvested from the "Rune reroll currency" chat.)
 
 ## Backlog (unordered)
