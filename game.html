@@ -1065,36 +1065,51 @@ function drawHUD() {
 
 function drawInventory() {
   invRects = [];
-  const pw = 330, px = W - pw - 26, py = 52, ph = H - 130;
+  ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(0, 0, W, H);
+  const px = 40, py = 40, pw = W - 80, ph = H - 80;
   invPanel.x = px; invPanel.y = py; invPanel.w = pw; invPanel.h = ph;
-  ctx.fillStyle = 'rgba(10,12,16,.94)'; ctx.fillRect(px, py, pw, ph);
+  ctx.fillStyle = 'rgba(12,14,20,.98)'; ctx.fillRect(px, py, pw, ph);
   ctx.strokeStyle = '#3a4150'; ctx.lineWidth = 2; ctx.strokeRect(px, py, pw, ph);
-  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 15px sans-serif'; ctx.fillText('Equipped', px + 14, py + 24);
-  ctx.fillStyle = '#f2c14e'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'right'; ctx.fillText('PAUSED · press I to resume', px + pw - 14, py + 24); ctx.textAlign = 'start';
-  ctx.font = '12px sans-serif';
-  let yy = py + 42;
-  for (const slot of SLOTS) {
-    const it = player.equipped[slot];
-    invRects.push({ x: px + 8, y: yy - 12, w: pw - 16, h: 18, kind: 'slot', ref: slot });
-    ctx.fillStyle = '#6b7280'; ctx.fillText(slot, px + 14, yy);
-    if (it) { ctx.fillStyle = it.rarity.color; ctx.fillText(it.name, px + 96, yy);
-      ctx.fillStyle = '#9aa0a8'; ctx.textAlign = 'right'; ctx.fillText(itemStatText(it), px + pw - 14, yy); ctx.textAlign = 'start'; }
-    else { ctx.fillStyle = '#41474f'; ctx.fillText('— empty —', px + 96, yy); }
-    yy += 20;
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 20px sans-serif'; ctx.fillText('Inventory', px + 20, py + 32);
+  ctx.fillStyle = '#7f8794'; ctx.font = '12px sans-serif';
+  ctx.fillText(isTouch ? 'Tap an item to equip/unequip  ·  tap ✕ or outside to close'
+                       : 'Click an item to equip/unequip  ·  press I or ✕ to close', px + 20, py + 52);
+
+  // Big close button (works on tap and click)
+  const cb = { x: px + pw - 52, y: py + 14, w: 40, h: 40, kind: 'close' };
+  invRects.push(cb);
+  ctx.fillStyle = '#241a1f'; ctx.fillRect(cb.x, cb.y, cb.w, cb.h);
+  ctx.strokeStyle = '#7a4b5c'; ctx.lineWidth = 2; ctx.strokeRect(cb.x, cb.y, cb.w, cb.h);
+  ctx.fillStyle = '#ff9a9a'; ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('✕', cb.x + cb.w / 2, cb.y + cb.h / 2 + 8); ctx.textAlign = 'left';
+
+  const colW = pw / 2 - 30, leftX = px + 20, rightX = px + pw / 2 + 10;
+  const rowH = 40, top = py + 84;
+
+  function drawRow(x, yy, it, slotLabel, kind, ref) {
+    invRects.push({ x, y: yy, w: colW, h: rowH - 6, kind, ref });
+    ctx.fillStyle = '#171a21'; ctx.fillRect(x, yy, colW, rowH - 6);
+    ctx.strokeStyle = '#23272f'; ctx.lineWidth = 1; ctx.strokeRect(x, yy, colW, rowH - 6);
+    if (slotLabel) { ctx.fillStyle = '#6b7280'; ctx.font = 'bold 10px sans-serif'; ctx.fillText(slotLabel.toUpperCase(), x + 10, yy + 15); }
+    const nameX = slotLabel ? x + 78 : x + 12;
+    if (it) {
+      ctx.fillStyle = it.rarity.color; ctx.font = 'bold 14px sans-serif'; ctx.fillText(it.name, nameX, yy + 15);
+      ctx.fillStyle = '#9aa0a8'; ctx.font = '11px sans-serif'; ctx.fillText(itemStatText(it), x + 12, yy + 30);
+    } else { ctx.fillStyle = '#41474f'; ctx.font = '13px sans-serif'; ctx.fillText('— empty —', nameX, yy + 15); }
   }
-  yy += 10;
-  ctx.strokeStyle = '#2a2f38'; ctx.beginPath(); ctx.moveTo(px + 12, yy - 6); ctx.lineTo(px + pw - 12, yy - 6); ctx.stroke();
-  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 15px sans-serif'; ctx.fillText('Backpack  (click to equip)', px + 14, yy + 14);
-  ctx.font = '12px sans-serif'; yy += 34;
-  if (player.inventory.length === 0) { ctx.fillStyle = '#7f8794'; ctx.fillText('Empty — go kill things.', px + 14, yy); }
-  const maxRows = Math.floor((py + ph - yy - 10) / 20);
-  const list = player.inventory.slice(-maxRows);
-  for (const it of list) {
-    invRects.push({ x: px + 8, y: yy - 13, w: pw - 16, h: 18, kind: 'bag', ref: it });
-    ctx.fillStyle = it.rarity.color; ctx.fillText(`◆ ${it.name}`, px + 14, yy);
-    ctx.fillStyle = '#9aa0a8'; ctx.textAlign = 'right'; ctx.fillText(itemStatText(it), px + pw - 14, yy); ctx.textAlign = 'start';
-    yy += 20;
-  }
+
+  // Equipped (left column)
+  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 15px sans-serif'; ctx.fillText('Equipped', leftX, top);
+  let yy = top + 14;
+  for (const slot of SLOTS) { drawRow(leftX, yy, player.equipped[slot], slot, 'slot', slot); yy += rowH; }
+
+  // Backpack (right column)
+  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 15px sans-serif'; ctx.fillText(`Backpack (${player.inventory.length})`, rightX, top);
+  let by = top + 14;
+  if (player.inventory.length === 0) { ctx.fillStyle = '#7f8794'; ctx.font = '13px sans-serif'; ctx.fillText('Empty — go kill things.', rightX + 4, by + 16); }
+  const maxRows = Math.floor((py + ph - by - 12) / rowH);
+  const list = player.inventory.slice(-maxRows).reverse();
+  for (const it of list) { drawRow(rightX, by, it, null, 'bag', it); by += rowH; }
 }
 
 function statLabel(stat, val) {
@@ -1111,7 +1126,10 @@ function itemStatText(it) {
 function handleInventoryClick() {
   for (const r of invRects) {
     if (mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h) {
-      if (r.kind === 'bag') equipItem(r.ref); else if (r.kind === 'slot') unequipSlot(r.ref); return true;
+      if (r.kind === 'close') showInv = false;
+      else if (r.kind === 'bag') equipItem(r.ref);
+      else if (r.kind === 'slot') unequipSlot(r.ref);
+      return true;
     }
   }
   return mouse.x >= invPanel.x && mouse.x <= invPanel.x + invPanel.w && mouse.y >= invPanel.y && mouse.y <= invPanel.y + invPanel.h;

@@ -15,6 +15,7 @@ _2D top-down ARPG (Diablo/PoE-like), single file: `game.html`._
 - [ ] **Hidden rooms** — secret rooms with extra loot to discover
 
 ## Done
+- [x] **Bigger, touch-friendly inventory** — full two-column panel, large rows, explicit ✕ close button (fixes "character frozen" confusion: game pauses while inventory/settings open; now easy to close on phone).
 - [x] **Mobile / touch support** — responsive canvas scaling; virtual joystick (left thumb) for movement; on-screen buttons for attack/spells/potions/inventory/settings; auto-aim at nearest enemy; "rotate to landscape" hint. Desktop controls unchanged.
 - [x] **Critical strike** — Crit chance + Crit damage stats (base 5% / 150%); rolls as affix on weapons & jewelry; applies to weapon attacks AND spells; gold floating damage numbers on crit.
 - [x] **Settings + rebindable keybinds** — Esc opens Settings; rebind spells/potions/inventory to any key, saved across sessions.
