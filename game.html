@@ -74,30 +74,44 @@ const RARITIES = [
 const RARITY_TOTAL = RARITIES.reduce((s, r) => s + r.weight, 0);
 
 // Weapon definitions: melee variants swing arcs; bow shoots arrows.
-// twoHanded weapons cannot be used together with an Off-hand (shield).
+// PRIMARY stats scale your class. Everything else is a SECONDARY stat.
+const PRIMARY_STATS = ['STR', 'AGI', 'INT'];
+const SECONDARY_STATS = ['Armor', 'Speed', 'Crit', 'CritDmg', 'SpellPower', 'SpellHaste'];
+function isPrimaryStat(s) { return PRIMARY_STATS.indexOf(s) >= 0; }
+
+// twoHanded weapons cannot be used together with an Off-hand.
+// caster:true weapons grant Spell Power instead of Attack Damage.
 const WEAPONS = {
   fist:      { ranged: false, arc: 0.60, reach: 46, spd: 1.15, base: 0,  color: '#dbe7f5', attr: null  },
+  dagger:    { ranged: false, arc: 0.55, reach: 44, spd: 1.55, base: 7,  color: '#d7f0ff', attr: 'AGI' },
   sword:     { ranged: false, arc: 0.75, reach: 66, spd: 1.05, base: 10, color: '#cfe6ff', attr: 'STR' },
   axe:       { ranged: false, arc: 1.15, reach: 72, spd: 0.75, base: 15, color: '#ffcaa0', attr: 'STR' },
   mace:      { ranged: false, arc: 0.95, reach: 58, spd: 0.85, base: 12, color: '#e6d7a3', attr: 'STR' },
+  wand:      { ranged: false, arc: 0.50, reach: 42, spd: 1.10, base: 2,  color: '#e0b0ff', attr: 'INT', caster: true, power: 9 },
   greatsword:{ ranged: false, arc: 1.05, reach: 84, spd: 0.80, base: 20, color: '#9fd0ff', attr: 'STR', twoHanded: true },
   battleaxe: { ranged: false, arc: 1.45, reach: 90, spd: 0.58, base: 28, color: '#ffb37a', attr: 'STR', twoHanded: true },
   warhammer: { ranged: false, arc: 1.20, reach: 74, spd: 0.66, base: 24, color: '#e8c97a', attr: 'STR', twoHanded: true },
   bow:       { ranged: true,  arc: 0,    reach: 0,  spd: 1.05, base: 9,  color: '#bfe6a0', attr: 'AGI', twoHanded: true },
-  staff:     { ranged: false, arc: 0.70, reach: 60, spd: 0.95, base: 8,  color: '#c9a0ff', attr: 'INT', twoHanded: true },
+  staff:     { ranged: false, arc: 0.70, reach: 60, spd: 0.95, base: 3,  color: '#c9a0ff', attr: 'INT', twoHanded: true, caster: true, power: 20 },
 };
+function isCasterWeapon(item) { return !!(item && item.weapon && WEAPONS[item.weapon] && WEAPONS[item.weapon].caster); }
 
 // slot + how the item's value is applied. 'ATTR' rolls a random attribute.
 const ITEM_TYPES = [
+  { type: 'Dagger',    slot: 'Weapon', weapon: 'dagger' },
   { type: 'Sword',     slot: 'Weapon', weapon: 'sword' },
   { type: 'Axe',       slot: 'Weapon', weapon: 'axe'   },
   { type: 'Mace',      slot: 'Weapon', weapon: 'mace'  },
+  { type: 'Wand',      slot: 'Weapon', weapon: 'wand'  },
   { type: 'Greatsword',slot: 'Weapon', weapon: 'greatsword' },
   { type: 'Battle Axe',slot: 'Weapon', weapon: 'battleaxe'  },
   { type: 'Warhammer', slot: 'Weapon', weapon: 'warhammer'  },
   { type: 'Bow',       slot: 'Weapon', weapon: 'bow'   },
   { type: 'Staff',     slot: 'Weapon', weapon: 'staff' },
-  { type: 'Shield', slot: 'Off-hand', stat: 'Armor'   },
+  // Off-hands: Shield for fighters, Tome/Orb for casters (WoW-style)
+  { type: 'Shield', slot: 'Off-hand', stat: 'Armor'      },
+  { type: 'Tome',   slot: 'Off-hand', stat: 'ATTR_INT'   },
+  { type: 'Orb',    slot: 'Off-hand', stat: 'SpellPower' },
   { type: 'Helm',   slot: 'Helm',     stat: 'Armor'   },
   { type: 'Boots',  slot: 'Boots',    stat: 'Speed'   },
   { type: 'Amulet', slot: 'Amulet',   stat: 'ATTR'    },
@@ -124,10 +138,17 @@ function rollRarity(minIdx = 0) {
   if (idx < minIdx) idx = minIdx;
   return RARITIES[idx];
 }
-// Rolls a critical-strike affix: either Crit chance (%) or Crit damage (%).
-function critAffix(rarIdx) {
-  if (Math.random() < 0.5) return { stat: 'Crit',    value: Math.max(1, Math.round((2 + Math.random() * 4) * (0.8 + 0.12 * rarIdx))) };
-  return                        { stat: 'CritDmg', value: Math.round((10 + Math.random() * 18) * (0.8 + 0.12 * rarIdx)) };
+// Rolls a SECONDARY stat affix (crit chance, crit damage, spell haste, spell power).
+const SECONDARY_ROLLS = ['Crit', 'CritDmg', 'SpellHaste'];
+const CASTER_ROLLS = ['Crit', 'CritDmg', 'SpellHaste', 'SpellPower'];
+function secondaryAffix(rarIdx, pool) {
+  const list = pool || SECONDARY_ROLLS;
+  const s = list[Math.floor(Math.random() * list.length)];
+  const m = 0.8 + 0.12 * rarIdx;
+  if (s === 'Crit')       return { stat: 'Crit',       value: Math.max(1, Math.round((2 + Math.random() * 4) * m)) };
+  if (s === 'CritDmg')    return { stat: 'CritDmg',    value: Math.round((10 + Math.random() * 18) * m) };
+  if (s === 'SpellHaste') return { stat: 'SpellHaste', value: Math.max(1, Math.round((3 + Math.random() * 6) * m)) };
+  return                         { stat: 'SpellPower', value: Math.max(1, Math.round((4 + Math.random() * 8) * m)) };
 }
 function makeItem(minIdx = 0) {
   const rar = rollRarity(minIdx);
@@ -141,14 +162,35 @@ function buildItem(rar, t) {
   if (t.weapon) {
     const wd = WEAPONS[t.weapon];
     item.weapon = t.weapon; item.ranged = wd.ranged;
-    item.stat = 'AtkDmg';
-    item.value = Math.round((wd.base + scale) * rar.mult);
+    if (wd.caster) {
+      // Caster weapons (Staff/Wand) give SPELL POWER, not attack damage.
+      item.stat = 'SpellPower';
+      item.value = Math.round((wd.power + scale) * rar.mult);
+    } else {
+      item.stat = 'AtkDmg';
+      item.value = Math.round((wd.base + scale) * rar.mult);
+    }
     if (wd.attr) { item.bonusStat = wd.attr; item.bonusValue = Math.max(1, Math.round(scale * 0.5 * rar.mult)); }
-    // Weapons can also roll a crit affix (more likely on higher rarities)
-    if (Math.random() < 0.28 + 0.09 * rarIdx) { const c = critAffix(rarIdx); item.bonusStat2 = c.stat; item.bonusValue2 = c.value; }
+    // Weapons can also roll a secondary affix (more likely on higher rarities)
+    if (Math.random() < 0.28 + 0.09 * rarIdx) {
+      const c = secondaryAffix(rarIdx, wd.caster ? CASTER_ROLLS : SECONDARY_ROLLS);
+      item.bonusStat2 = c.stat; item.bonusValue2 = c.value;
+    }
+  } else if (t.stat === 'ATTR_INT') {
+    // Caster off-hand (Tome): Intellect + a caster secondary
+    item.stat = 'INT'; item.value = Math.round(scale * rar.mult);
+    const c = secondaryAffix(rarIdx, CASTER_ROLLS); item.bonusStat2 = c.stat; item.bonusValue2 = c.value;
+  } else if (t.stat === 'SpellPower') {
+    // Caster off-hand (Orb): Spell Power + often Intellect
+    item.stat = 'SpellPower'; item.value = Math.max(1, Math.round(scale * 0.9 * rar.mult));
+    if (Math.random() < 0.7) { item.bonusStat = 'INT'; item.bonusValue = Math.max(1, Math.round(scale * 0.5 * rar.mult)); }
+    else { const c = secondaryAffix(rarIdx, CASTER_ROLLS); item.bonusStat2 = c.stat; item.bonusValue2 = c.value; }
+  } else if (t.stat === 'Armor') {
+    item.stat = 'Armor'; item.value = Math.round(scale * rar.mult);
+    if (Math.random() < 0.25 + 0.08 * rarIdx) { const c = secondaryAffix(rarIdx); item.bonusStat2 = c.stat; item.bonusValue2 = c.value; }
   } else if (t.stat === 'ATTR') {
-    // Jewelry: an attribute, or sometimes a crit stat instead
-    if (Math.random() < 0.4) { const c = critAffix(rarIdx); item.stat = c.stat; item.value = c.value; }
+    // Jewelry: a PRIMARY attribute, or sometimes a SECONDARY stat instead
+    if (Math.random() < 0.45) { const c = secondaryAffix(rarIdx, CASTER_ROLLS); item.stat = c.stat; item.value = c.value; }
     else { item.stat = ATTRS[Math.floor(Math.random() * ATTRS.length)]; item.value = Math.round(scale * rar.mult); }
   } else {
     item.stat = t.stat;
@@ -386,22 +428,26 @@ const POTION_CAP = 5, MANA_POTION_CAP = 5; // max you can carry — extras stay 
 
 function recomputeStats() {
   // gather attributes + flat bonuses from gear
-  let STR = 0, AGI = 0, INT = 0, armor = 0, speedBonus = 0, weaponDamage = 0, critChance = 0, critDmg = 0;
+  let STR = 0, AGI = 0, INT = 0, armor = 0, speedBonus = 0, weaponDamage = 0, critChance = 0, critDmg = 0, spellPowerGear = 0, spellHaste = 0;
+  // Every gear line is one of: PRIMARY (STR/AGI/INT) or SECONDARY (everything else).
+  const addStat = (s, v) => {
+    if (!s || !v) return;
+    if (s === 'STR') STR += v;
+    else if (s === 'AGI') AGI += v;
+    else if (s === 'INT') INT += v;
+    else if (s === 'Armor') armor += v;
+    else if (s === 'Speed') speedBonus += v;
+    else if (s === 'AtkDmg') weaponDamage += v;
+    else if (s === 'Crit') critChance += v;
+    else if (s === 'CritDmg') critDmg += v;
+    else if (s === 'SpellPower') spellPowerGear += v;
+    else if (s === 'SpellHaste') spellHaste += v;
+  };
   for (const slot of SLOTS) {
     const it = player.equipped[slot]; if (!it) continue;
-    if (it.stat === 'STR') STR += it.value;
-    else if (it.stat === 'AGI') AGI += it.value;
-    else if (it.stat === 'INT') INT += it.value;
-    else if (it.stat === 'Armor') armor += it.value;
-    else if (it.stat === 'Speed') speedBonus += it.value;
-    else if (it.stat === 'AtkDmg') weaponDamage += it.value;
-    else if (it.stat === 'Crit') critChance += it.value;
-    else if (it.stat === 'CritDmg') critDmg += it.value;
-    if (it.bonusStat === 'STR') STR += it.bonusValue;
-    else if (it.bonusStat === 'AGI') AGI += it.bonusValue;
-    else if (it.bonusStat === 'INT') INT += it.bonusValue;
-    if (it.bonusStat2 === 'Crit') critChance += it.bonusValue2;
-    else if (it.bonusStat2 === 'CritDmg') critDmg += it.bonusValue2;
+    addStat(it.stat, it.value);
+    addStat(it.bonusStat, it.bonusValue);
+    addStat(it.bonusStat2, it.bonusValue2);
   }
   if (player.class) { STR += player.class.base.STR; AGI += player.class.base.AGI; INT += player.class.base.INT; }
   player.attrs = { STR, AGI, INT };
@@ -419,8 +465,11 @@ function recomputeStats() {
   else if (prim === 'AGI') atk += Math.round(AGI * 1.2);
   player.stats.attackDamage = atk;
   player.stats.armor = armor;
-  // Spell power from INT (doubled for the Mage's primary).
-  player.spellPower = Math.round(INT * (prim === 'INT' ? 2 : 1));
+  // Spell power = gear Spell Power + INT (doubled when INT is your primary).
+  player.spellPower = Math.round(spellPowerGear + INT * (prim === 'INT' ? 2 : 1));
+  // Spell haste shortens spell cooldowns (capped at 60% reduction).
+  player.stats.spellHaste = spellHaste;
+  player.stats.hasteMult = 1 / (1 + Math.min(150, spellHaste) / 100);
 
   // Attack speed from AGI + weapon speed
   const atkSpeedMult = (1 + AGI * 0.04) * wdef.spd;
@@ -518,8 +567,16 @@ const KEY_ORDER = ['q', 'w', 'e', 'r'];
 let projectiles = [], meteors = [], fx = [];
 
 function spellStatFor(def) { const p = { Warrior: 'STR', Hunter: 'AGI', Mage: 'INT' }[def.cls]; return player.attrs[p] || 0; }
-function spellDamage(inst, def) { const lvl = 1 + 0.25 * (inst.level - 1); return Math.round((def.dmg + spellStatFor(def) * 1.1) * lvl); }
-function spellCooldown(inst, def) { return Math.round(def.cd * Math.max(0.7, 1 - 0.04 * (inst.level - 1))); }
+// Spell damage scales with your class PRIMARY stat and with Spell Power (secondary).
+function spellDamage(inst, def) {
+  const lvl = 1 + 0.25 * (inst.level - 1);
+  return Math.round((def.dmg + spellStatFor(def) * 1.1 + (player.spellPower || 0) * 0.9) * lvl);
+}
+// Cooldown drops slightly with spell level and is further reduced by Spell Haste.
+function spellCooldown(inst, def) {
+  const haste = player.stats.hasteMult || 1;
+  return Math.max(4, Math.round(def.cd * Math.max(0.7, 1 - 0.04 * (inst.level - 1)) * haste));
+}
 
 function castSpell(i) {
   if (game.menu || game.over || showInv) return;
@@ -1138,11 +1195,14 @@ function drawHUD() {
   drawPotionIcon(28, 60, 6, 'health'); ctx.fillStyle = player.potions >= POTION_CAP ? '#ffcf5c' : '#cfd4dc'; ctx.font = '12px sans-serif'; ctx.fillText(`${player.potions}/${POTION_CAP} (1)`, 40, 64);
   drawPotionIcon(120, 60, 6, 'mana'); ctx.fillStyle = player.manaPotions >= MANA_POTION_CAP ? '#ffcf5c' : '#cfd4dc'; ctx.fillText(`${player.manaPotions}/${MANA_POTION_CAP} (2)`, 132, 64);
   const a = player.attrs;
-  ctx.fillStyle = '#d7c98a'; ctx.fillText(`${player.class ? player.class.name + '  ·  ' : ''}STR ${a.STR}  AGI ${a.AGI}  INT ${a.INT}`, 16, 82);
+  const prim = player.class ? player.class.primary : null;
+  ctx.fillStyle = '#d7c98a';
+  ctx.fillText(`${player.class ? player.class.name + '  ·  ' : ''}${PRIMARY_STATS.map(s => `${s} ${a[s]}${s === prim ? '★' : ''}`).join('  ')}`, 16, 82);
+  const wk = player.weapon.key, wdef = WEAPONS[wk] || {};
   ctx.fillStyle = '#cfd4dc';
-  ctx.fillText(`AtkDmg ${player.stats.attackDamage}  AtkSpd ${player.stats.attacksPerSec.toFixed(2)}/s  ARM ${player.stats.armor}  [${player.weapon.key}${WEAPONS[player.weapon.key] && WEAPONS[player.weapon.key].twoHanded ? ' · 2H' : ''}${player.weapon.ranged ? ' · ranged' : ''}]`, 16, 98);
+  ctx.fillText(`AtkDmg ${player.stats.attackDamage}  AtkSpd ${player.stats.attacksPerSec.toFixed(2)}/s  ARM ${player.stats.armor}  [${wk}${wdef.twoHanded ? ' · 2H' : ''}${wdef.caster ? ' · caster' : ''}${player.weapon.ranged ? ' · ranged' : ''}]`, 16, 98);
   ctx.fillStyle = '#ffcf5c';
-  ctx.fillText(`Crit ${Math.round(player.stats.critChance * 100)}%  ·  Crit Dmg ${Math.round(player.stats.critDamage * 100)}%`, 16, 114);
+  ctx.fillText(`Crit ${Math.round(player.stats.critChance * 100)}%  ·  CritDmg ${Math.round(player.stats.critDamage * 100)}%  ·  SpellPwr ${player.spellPower}  ·  Haste ${player.stats.spellHaste || 0}%`, 16, 114);
 
   ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'right';
   ctx.fillStyle = game.isBoss ? '#ffb35c' : '#cfd4dc'; ctx.fillText(`Level ${game.level}${game.isBoss ? ' · BOSS' : ''}`, W - 34, 26);
@@ -1213,7 +1273,15 @@ function drawInventory() {
     const nameX = slotLabel ? x + 78 : x + 12;
     if (it) {
       ctx.fillStyle = it.rarity.color; ctx.font = 'bold 14px sans-serif'; ctx.fillText(it.name, nameX, yy + 15);
-      ctx.fillStyle = '#9aa0a8'; ctx.font = '11px sans-serif'; ctx.fillText(itemStatText(it), x + 12, yy + 30);
+      // primary stat lines in gold, secondary lines in grey
+      let sx = x + 12; ctx.font = '11px sans-serif';
+      for (const [s, v] of [[it.stat, it.value], [it.bonusStat, it.bonusValue], [it.bonusStat2, it.bonusValue2]]) {
+        if (!s || !v) continue;
+        const txt = statLabel(s, v) + '  ';
+        ctx.fillStyle = isPrimaryStat(s) ? '#d7c98a' : '#8b93a0';
+        ctx.fillText(txt, sx, yy + 30); sx += ctx.measureText(txt).width;
+      }
+      if (isTwoHanded(it)) { ctx.fillStyle = '#7a5b2a'; ctx.fillText('· 2H', sx, yy + 30); }
     } else if (slotLabel === 'Off-hand' && isTwoHanded(player.equipped.Weapon)) {
       ctx.fillStyle = '#7a5b2a'; ctx.font = 'italic 12px sans-serif'; ctx.fillText('— blocked: two-handed weapon —', nameX, yy + 15);
     } else { ctx.fillStyle = '#41474f'; ctx.font = '13px sans-serif'; ctx.fillText('— empty —', nameX, yy + 15); }
@@ -1389,6 +1457,9 @@ function handleMergeClick() {
 function statLabel(stat, val) {
   if (stat === 'Crit') return `+${val}% Crit`;
   if (stat === 'CritDmg') return `+${val}% Crit Dmg`;
+  if (stat === 'SpellHaste') return `+${val}% Spell Haste`;
+  if (stat === 'SpellPower') return `+${val} Spell Power`;
+  if (stat === 'AtkDmg') return `+${val} Attack Dmg`;
   return `+${val} ${stat}`;
 }
 function itemStatText(it) {
