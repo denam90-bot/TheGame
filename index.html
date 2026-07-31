@@ -536,6 +536,7 @@ function recomputeStats() {
   const oldMaxHp = player.maxHp;
   player.maxHp = BASE.hp + STR * 8;
   player.hpRegen = STR * 0.02;
+  player.stats.hpPerSec = player.hpRegen * 60;
   if (player.maxHp > oldMaxHp) player.hp += (player.maxHp - oldMaxHp);
   player.hp = Math.min(player.hp, player.maxHp);
 
@@ -1782,8 +1783,8 @@ function drawStatsBlock(x, y, w) {
     ['Crit', Math.round(s.critChance * 100) + '%'], ['Crit Dmg', Math.round(s.critDamage * 100) + '%'],
     ['Spell Power', player.spellPower], ['Spell Haste', (s.spellHaste || 0) + '%'],
     ['Armor', s.armor], ['Move Speed', player.speed.toFixed(2)],
-    ['Max HP', player.maxHp], ['Max Mana', player.maxMana],
-    ['Mana Regen', (player.stats.manaPerSec || 0).toFixed(1) + '/s'],
+    ['Max HP', player.maxHp], ['HP Regen', (player.stats.hpPerSec || 0).toFixed(1) + '/s'],
+    ['Max Mana', player.maxMana], ['Mana Regen', (player.stats.manaPerSec || 0).toFixed(1) + '/s'],
   ];
   const rows = Math.max(P.length, Math.ceil(S.length / 1));
   for (let i = 0; i < Math.max(P.length, S.length); i++) {
@@ -1794,7 +1795,10 @@ function drawStatsBlock(x, y, w) {
   // bonus lines under the primaries
   row = P.length;
   put('Atk Speed bonus', '+' + (s.atkSpeedBonus || 0) + '%', '#8b93a0', 0);
-  return 18 + Math.max(P.length + 1, S.length) * lh + 10;
+  const noteY = y + 18 + Math.max(P.length + 1, S.length) * lh + 2;
+  ctx.fillStyle = player.combatT > 0 ? '#ff9a9a' : '#5a5f68'; ctx.font = 'italic 10px sans-serif';
+  ctx.fillText(player.combatT > 0 ? 'HP regen paused — in combat' : 'HP regen pauses for 2.5s after taking damage', x, noteY);
+  return (noteY - y) + 12;
 }
 
 function statLabel(stat, val) {
