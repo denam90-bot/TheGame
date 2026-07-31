@@ -15,6 +15,7 @@ _2D top-down ARPG (Diablo/PoE-like), single file: `game.html`._
 - [ ] More spells
 - [ ] Custom art / sprites (currently simple shapes)
 - [ ] Wrap into desktop app (Tauri/Electron)
+- [ ] **Sound** — SFX for hits, crits, spells, loot pickup, level up, boss spawn, forge; maybe background music. Needs a mute toggle in Settings.
 
 ## Done
 - [x] **Forge (merge items)** — new ⚒ Forge screen (opened from the inventory): stage 3 items of the same rarity into 3 slots, press FORGE, get 1 item of the next rarity up with freshly rolled stats. Result keeps the type of one consumed item. Rarity locks after the first pick; Legendary can't be an input; closing returns staged items. Scrollable list, works on touch + desktop.
