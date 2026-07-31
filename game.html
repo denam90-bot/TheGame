@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>The Game — Prototype 1.4</title>
+<title>The Game — Prototype 1.5</title>
 <style>
   html, body { margin: 0; height: 100%; background: #14161c; color: #cfd4dc; font-family: -apple-system, Segoe UI, Roboto, sans-serif; overflow: hidden; }
   #wrap { display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: center; gap: 10px; }
@@ -133,7 +133,7 @@ const ROLLS_FOR = {
   AGI: ['Crit', 'CritDmg', 'AtkSpeed', 'AtkSpeed'],
   INT: ['Crit', 'CritDmg', 'SpellHaste', 'SpellPower'],
 };
-function isCasterWeapon(item) { return !!(item && item.weapon && WEAPONS[item.weapon] && WEAPONS[item.weapon].caster); }
+function isCasterWeapon(item) { return !!(item && (item.casterWeapon || (item.weapon && WEAPONS[item.weapon] && WEAPONS[item.weapon].caster))); }
 
 // slot + how the item's value is applied. 'ATTR' rolls a random attribute.
 const ITEM_TYPES = [
@@ -202,19 +202,22 @@ function buildItem(rar, t) {
   if (t.weapon) {
     const wd = WEAPONS[t.weapon];
     item.weapon = t.weapon; item.ranged = wd.ranged;
-    if (wd.caster) {
-      // Caster weapons (Staff/Wand) give SPELL POWER, not attack damage.
+    // Pick which PRIMARY this weapon rolled — that decides who it suits and
+    // which secondary stats it can get (AGI dagger vs INT dagger, etc).
+    const attrs = wd.attrs || [];
+    const a = attrs.length ? attrs[Math.floor(Math.random() * attrs.length)] : null;
+    // COHERENCE RULE: an INT weapon is a caster weapon — it grants Spell Power,
+    // never Attack Damage. So you can't get "Staff: +Attack Dmg +INT".
+    const casterItem = wd.caster || a === 'INT';
+    if (casterItem) {
       item.stat = 'SpellPower';
-      item.value = Math.round((wd.power + scale) * rar.mult);
+      item.value = Math.round(((wd.power != null ? wd.power : Math.round(wd.base * 1.1)) + scale) * rar.mult);
+      item.casterWeapon = true;
     } else {
       item.stat = 'AtkDmg';
       item.value = Math.round((wd.base + scale) * rar.mult);
     }
-    // Pick which PRIMARY this weapon rolled — that decides who it suits and
-    // which secondary stats it can get (AGI dagger vs INT dagger, etc).
-    const attrs = wd.attrs || [];
-    if (attrs.length) {
-      const a = attrs[Math.floor(Math.random() * attrs.length)];
+    if (a) {
       item.bonusStat = a; item.bonusValue = Math.max(1, Math.round(scale * 0.5 * rar.mult));
       const pool = ROLLS_FOR[a] || SECONDARY_ROLLS;
       const c1 = secondaryAffix(rarIdx, pool);
@@ -1373,7 +1376,7 @@ function drawHUD() {
   ctx.fillText(`${player.class ? player.class.name + '  ·  ' : ''}${PRIMARY_STATS.map(s => `${s} ${a[s]}${s === prim ? '★' : ''}`).join('  ')}`, 16, 82);
   const wk = player.weapon.key, wdef = WEAPONS[wk] || {};
   ctx.fillStyle = '#cfd4dc';
-  ctx.fillText(`AtkDmg ${player.stats.attackDamage}  AtkSpd ${player.stats.attacksPerSec.toFixed(2)}/s  ARM ${player.stats.armor}  [${wk}${wdef.twoHanded ? ' · 2H' : ''}${wdef.caster ? ' · caster' : ''}${player.weapon.ranged ? ' · ranged' : ''}]`, 16, 98);
+  ctx.fillText(`AtkDmg ${player.stats.attackDamage}  AtkSpd ${player.stats.attacksPerSec.toFixed(2)}/s  ARM ${player.stats.armor}  [${wk}${wdef.twoHanded ? ' · 2H' : ''}${isCasterWeapon(player.equipped.Weapon) ? ' · caster' : ''}${player.weapon.ranged ? ' · ranged' : ''}]`, 16, 98);
   ctx.fillStyle = '#ffcf5c';
   ctx.fillText(`Crit ${Math.round(player.stats.critChance * 100)}%  ·  CritDmg ${Math.round(player.stats.critDamage * 100)}%  ·  SpellPwr ${player.spellPower}  ·  SpellHaste ${player.stats.spellHaste || 0}%  ·  AtkSpd +${player.stats.atkSpeedBonus || 0}%`, 16, 114);
 
@@ -1448,7 +1451,9 @@ function drawInventory() {
   const colW = narrow ? pw - 40 : pw / 2 - 30;
   const leftX = px + 20, rightX = narrow ? px + 20 : px + pw / 2 + 10;
   const rowH = 40, top = py + 84;
-  const bagTop = narrow ? top + 14 + SLOTS.length * rowH + 26 : top;
+  const statsTop = top + 14 + SLOTS.length * rowH + 22;
+  const statsH = 210;
+  const bagTop = narrow ? statsTop + statsH : top;
 
   function drawRow(x, yy, it, slotLabel, kind, ref) {
     invRects.push({ x, y: yy, w: colW, h: rowH - 6, kind, ref });
@@ -1476,6 +1481,11 @@ function drawInventory() {
   ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 15px sans-serif'; ctx.fillText('Equipped', leftX, top);
   let yy = top + 14;
   for (const slot of SLOTS) { drawRow(leftX, yy, player.equipped[slot], slot, 'slot', slot); yy += rowH; }
+
+  // Character sheet, always visible next to the gear so swaps show their effect live
+  ctx.strokeStyle = '#2a2f38'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(leftX, statsTop - 14); ctx.lineTo(leftX + colW, statsTop - 14); ctx.stroke();
+  drawStatsBlock(leftX, statsTop, colW);
 
   // Backpack — scrollable (newest first)
   const fullList = player.inventory.slice().reverse();
@@ -1745,6 +1755,42 @@ function handleMergeClick() {
   return mouse.x >= mergePanel.x && mouse.x <= mergePanel.x + mergePanel.w && mouse.y >= mergePanel.y && mouse.y <= mergePanel.y + mergePanel.h;
 }
 
+// Live character sheet — every primary and secondary stat, updating as you swap gear.
+function drawStatsBlock(x, y, w) {
+  const prim = player.class ? player.class.primary : null;
+  const a = player.attrs, s = player.stats;
+  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 14px sans-serif'; ctx.fillText('Character', x, y);
+  const colW2 = w / 2, lh = 15;
+  let row = 0;
+  const put = (label, val, color, col) => {
+    const cx = x + (col || 0) * colW2, cy = y + 18 + row * lh;
+    ctx.fillStyle = '#6b7280'; ctx.font = '11px sans-serif'; ctx.fillText(label, cx, cy);
+    ctx.fillStyle = color || '#cfd4dc'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText(val, cx + colW2 - 14, cy); ctx.textAlign = 'left';
+  };
+  // PRIMARY (gold) — left column; SECONDARY (grey) — right column
+  const P = [
+    ['STR', a.STR], ['AGI', a.AGI], ['INT', a.INT],
+  ];
+  const S = [
+    ['Attack Dmg', s.attackDamage], ['Attack Speed', s.attacksPerSec.toFixed(2) + '/s'],
+    ['Crit', Math.round(s.critChance * 100) + '%'], ['Crit Dmg', Math.round(s.critDamage * 100) + '%'],
+    ['Spell Power', player.spellPower], ['Spell Haste', (s.spellHaste || 0) + '%'],
+    ['Armor', s.armor], ['Move Speed', player.speed.toFixed(2)],
+    ['Max HP', player.maxHp], ['Max Mana', player.maxMana],
+  ];
+  const rows = Math.max(P.length, Math.ceil(S.length / 1));
+  for (let i = 0; i < Math.max(P.length, S.length); i++) {
+    row = i;
+    if (i < P.length) put(P[i][0], P[i][1], P[i][0] === prim ? '#ffcf5c' : '#d7c98a', 0);
+    if (i < S.length) put(S[i][0], S[i][1], '#9fd0ff', 1);
+  }
+  // bonus lines under the primaries
+  row = P.length;
+  put('Atk Speed bonus', '+' + (s.atkSpeedBonus || 0) + '%', '#8b93a0', 0);
+  return 18 + Math.max(P.length + 1, S.length) * lh + 10;
+}
+
 function statLabel(stat, val) {
   if (stat === 'Crit') return `+${val}% Crit`;
   if (stat === 'CritDmg') return `+${val}% Crit Dmg`;
@@ -1811,7 +1857,7 @@ function drawMenu() {
   ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 32px sans-serif'; ctx.fillText('THE GAME', W / 2, 84);
   ctx.fillStyle = '#9aa0a8'; ctx.font = '15px sans-serif'; ctx.fillText('Choose your class', W / 2, 112);
   ctx.fillStyle = '#5fcf8f'; ctx.font = 'bold 12px sans-serif';
-  ctx.fillText(`v1.4 · ${W}×${H} · ${W < H ? 'PORTRAIT' : 'landscape'}`, W / 2, 132);
+  ctx.fillText(`v1.5 · ${W}×${H} · ${W < H ? 'PORTRAIT' : 'landscape'}`, W / 2, 132);
 
   menuRects = [];
   const gap = 20;
