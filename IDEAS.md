@@ -4,6 +4,13 @@ _Running list of what to build next. Add anything anytime; check items off as th
 _2D top-down ARPG (Diablo/PoE-like), single file: `game.html`._
 
 ## Up next — HIGH priority (in order)
+- [ ] **Armor types per class (cloth / leather / plate)** — each class can only wear its own type:
+  - **Mage → Cloth**, **Rogue/Hunter → Leather**, **Warrior → Plate**
+  - Armor value: **Cloth < Leather < Plate**
+  - Base move speed (no gear): **Rogue fastest → Mage → Warrior slowest**
+  - Armor slows you down: **Plate slows most → Leather → Cloth least**
+  - Items get an armor-type tag; wrong-type pieces can't be equipped (they become **shard fodder** — nice synergy with the salvage system).
+  - *Design watch-outs:* Warrior is both the slowest base AND wears the heaviest armor — the two penalties compound, so plate needs a big enough armor payoff (or a cap on the speed penalty) or he'll feel miserable to play. Also decide whether the speed penalty is flat per piece or scales with the item's armor value.
 - [ ] **XP & character levels** — kills grant experience; levelling up raises the character level and **spells scale/level with it** (instead of only via tomes). Open questions to decide: does XP level the character (granting stat points / auto spell ranks), or feed each spell separately? Suggested: character level → +primary stat and +1 spell rank every N levels; XP bar in the HUD; enemies grant XP scaled by region/cycle.
 - [ ] **Auras (passive spells)** — collectable passives, **max 4 equipped** (swappable). Dropped by region bosses / rare relics; level up like spell tomes (stacking effect per level). Proposed pool:
   - **Precision** — +Crit chance
