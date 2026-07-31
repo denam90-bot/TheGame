@@ -416,7 +416,7 @@ const player = {
   hp: 100, maxHp: 100, hpRegen: 0, hitFlash: 0, healFlash: 0, manaFlash: 0, combatT: 0,
   mana: 100, maxMana: 100, manaRegen: 0.12,
   speed: BASE.speed, potions: 1, manaPotions: 1,
-  class: null, spellPower: 0, spells: [],
+  class: null, spellPower: 0, spells: [], shards: [0, 0, 0, 0, 0],
   attrs: { STR: 0, AGI: 0, INT: 0 },
   weapon: { key: 'fist', ranged: false, arc: WEAPONS.fist.arc, reach: WEAPONS.fist.reach, color: WEAPONS.fist.color },
   inventory: [],
@@ -801,6 +801,7 @@ function startRun(cls) {
   player.class = cls;
   game.menu = false; game.over = false; game.level = 1; game.kills = 0;
   mergeOpen = false; mergeSlots = [null, null, null]; mergeScroll = 0; mergeMsg = null; showInv = false; invScroll = 0;
+  mergeTab = 'forge'; salvageMode = false; craftRarityIdx = 2; player.shards = [0, 0, 0, 0, 0];
   player.hitFlash = 0; player.healFlash = 0; player.manaFlash = 0; player.combatT = 0; player.potions = 1; player.manaPotions = 1;
   player.inventory = [];
   player.equipped = { Weapon: null, 'Off-hand': null, Helm: null, Amulet: null, Ring1: null, Ring2: null, Boots: null };
@@ -937,6 +938,49 @@ let invScroll = 0, invMaxRows = 1;
 //  FORGE / MERGE — combine 3 items of the same rarity into 1 of the next tier
 // --------------------------------------------------------------------
 let mergeOpen = false, mergeSlots = [null, null, null], mergeRects = [], mergeScroll = 0, mergeMaxRows = 1, mergeMsg = null, mergeMsgT = 0;
+let mergeTab = 'forge';        // 'forge' | 'shards'
+let salvageMode = false;       // in the inventory, tapping an item destroys it for a shard
+let craftRarityIdx = 2;        // which rarity the Shards tab is crafting
+
+// --------------------------------------------------------------------
+//  SHARDS — salvage unwanted loot, then craft the item you actually want
+//  Tunable: cost to craft, and how many lower shards convert into a higher one.
+// --------------------------------------------------------------------
+const SHARD_COST = 10;     // shards of a rarity needed to craft any item of it
+const SHARD_CONVERT = 3;   // lower-rarity shards that fuse into 1 of the next tier
+function shardName(i) { return RARITIES[i].name + ' Shard'; }
+function salvageItem(it) {
+  const idx = player.inventory.indexOf(it); if (idx === -1) return false;
+  player.inventory.splice(idx, 1);
+  player.shards[RARITIES.indexOf(it.rarity)]++;
+  return true;
+}
+function salvageAllOfRarity(rarIdx) {
+  let n = 0;
+  for (let i = player.inventory.length - 1; i >= 0; i--) {
+    if (RARITIES.indexOf(player.inventory[i].rarity) === rarIdx) { player.inventory.splice(i, 1); player.shards[rarIdx]++; n++; }
+  }
+  if (n) fx.push({ kind: 'toast', text: `Salvaged ${n} × ${RARITIES[rarIdx].name} → ${n} shards`, life: 140, maxLife: 140 });
+  return n;
+}
+function canCraft(rarIdx) { return player.shards[rarIdx] >= SHARD_COST; }
+function craftFromShards(rarIdx, typeName) {
+  if (!canCraft(rarIdx)) { mergeMsg = `Need ${SHARD_COST} ${RARITIES[rarIdx].name} shards`; mergeMsgT = 140; return null; }
+  const t = ITEM_TYPES.find(x => x.type === typeName); if (!t) return null;
+  player.shards[rarIdx] -= SHARD_COST;
+  const out = buildItem(RARITIES[rarIdx], t);
+  player.inventory.push(out);
+  mergeMsg = `Crafted: ${out.name}`; mergeMsgT = 180;
+  fx.push({ kind: 'toast', text: `Crafted ${out.name}`, life: 150, maxLife: 150 });
+  return out;
+}
+function convertShards(rarIdx) {
+  if (rarIdx >= RARITIES.length - 1) { mergeMsg = 'Legendary is the highest tier'; mergeMsgT = 140; return false; }
+  if (player.shards[rarIdx] < SHARD_CONVERT) { mergeMsg = `Need ${SHARD_CONVERT} ${RARITIES[rarIdx].name} shards`; mergeMsgT = 140; return false; }
+  player.shards[rarIdx] -= SHARD_CONVERT; player.shards[rarIdx + 1]++;
+  mergeMsg = `${SHARD_CONVERT} ${RARITIES[rarIdx].name} → 1 ${RARITIES[rarIdx + 1].name} shard`; mergeMsgT = 160;
+  return true;
+}
 const mergePanel = { x: 0, y: 0, w: 0, h: 0 };
 function openMerge() { mergeOpen = true; showInv = false; mergeSlots = [null, null, null]; mergeScroll = 0; mergeMsg = null; }
 function closeMerge() { returnMergeItems(); mergeOpen = false; }
@@ -1241,9 +1285,11 @@ function drawInventory() {
   ctx.strokeStyle = '#3a4150'; ctx.lineWidth = 2; ctx.strokeRect(px, py, pw, ph);
   ctx.textAlign = 'left';
   ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 20px sans-serif'; ctx.fillText('Inventory', px + 20, py + 32);
-  ctx.fillStyle = '#7f8794'; ctx.font = '12px sans-serif';
-  ctx.fillText(isTouch ? 'Tap an item to equip/unequip  ·  tap ✕ or outside to close'
-                       : 'Click an item to equip/unequip  ·  press I or ✕ to close', px + 20, py + 52);
+  ctx.fillStyle = salvageMode ? '#ff9a9a' : '#7f8794'; ctx.font = '12px sans-serif';
+  ctx.fillText(salvageMode
+    ? `SALVAGE MODE — tap a backpack item to destroy it for 1 shard  (${SHARD_COST} shards = 1 crafted item)`
+    : (isTouch ? 'Tap an item to equip/unequip  ·  tap ✕ or outside to close'
+               : 'Click an item to equip/unequip  ·  press I or ✕ to close'), px + 20, py + 52);
 
   // Big close button (works on tap and click)
   const cb = { x: px + pw - 52, y: py + 14, w: 40, h: 40, kind: 'close' };
@@ -1252,12 +1298,19 @@ function drawInventory() {
   ctx.strokeStyle = '#7a4b5c'; ctx.lineWidth = 2; ctx.strokeRect(cb.x, cb.y, cb.w, cb.h);
   ctx.fillStyle = '#ff9a9a'; ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('✕', cb.x + cb.w / 2, cb.y + cb.h / 2 + 8); ctx.textAlign = 'left';
 
-  // Forge entry button
+  // Forge + Salvage buttons
   const fb = { x: px + pw - 190, y: py + 16, w: 124, h: 36, kind: 'forgeOpen' };
   invRects.push(fb);
   ctx.fillStyle = '#3a2c12'; ctx.fillRect(fb.x, fb.y, fb.w, fb.h);
   ctx.strokeStyle = '#ffcf5c'; ctx.lineWidth = 2; ctx.strokeRect(fb.x, fb.y, fb.w, fb.h);
   ctx.fillStyle = '#ffcf5c'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('⚒  Forge', fb.x + fb.w / 2, fb.y + 24); ctx.textAlign = 'left';
+
+  const sb = { x: px + pw - 330, y: py + 16, w: 132, h: 36, kind: 'salvageToggle' };
+  invRects.push(sb);
+  ctx.fillStyle = salvageMode ? '#4a1c22' : '#171a21'; ctx.fillRect(sb.x, sb.y, sb.w, sb.h);
+  ctx.strokeStyle = salvageMode ? '#ff6b6b' : '#3a4150'; ctx.lineWidth = 2; ctx.strokeRect(sb.x, sb.y, sb.w, sb.h);
+  ctx.fillStyle = salvageMode ? '#ff9a9a' : '#9aa0a8'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(salvageMode ? '✖ SALVAGING' : '✖ Salvage', sb.x + sb.w / 2, sb.y + 23); ctx.textAlign = 'left';
 
   const narrow = W < 700; // portrait: stack the two sections instead of side-by-side
   const colW = narrow ? pw - 40 : pw / 2 - 30;
@@ -1296,7 +1349,7 @@ function drawInventory() {
   const fullList = player.inventory.slice().reverse();
   const total = fullList.length;
   let by = bagTop + 14;
-  const maxRows = Math.max(1, Math.floor((py + ph - by - 20) / rowH));
+  const maxRows = Math.max(1, Math.floor((py + ph - by - (salvageMode ? 62 : 20)) / rowH));
   invMaxRows = maxRows;
   const maxScroll = Math.max(0, total - maxRows);
   invScroll = clamp(invScroll, 0, maxScroll);
@@ -1318,6 +1371,22 @@ function drawInventory() {
   const visible = fullList.slice(invScroll, invScroll + maxRows);
   for (const it of visible) { drawRow(rightX, by, it, null, 'bag', it); by += rowH; }
 
+  // Bulk salvage helpers (only while salvaging) — huge time-saver with a full backpack
+  if (salvageMode) {
+    const byy = py + ph - 48;
+    [[0, 'Normal'], [1, 'Uncommon'], [2, 'Rare']].forEach(([ri, nm], i) => {
+      const bw2 = Math.min(150, (colW - 16) / 3), bx2 = rightX + i * (bw2 + 8);
+      const cnt = player.inventory.filter(x => RARITIES.indexOf(x.rarity) === ri).length;
+      invRects.push({ x: bx2, y: byy, w: bw2, h: 32, kind: 'salvageAll', ref: ri });
+      ctx.fillStyle = cnt ? '#2a1a1e' : '#171a21'; ctx.fillRect(bx2, byy, bw2, 32);
+      ctx.strokeStyle = cnt ? '#7a4b5c' : '#2a2f38'; ctx.lineWidth = 1; ctx.strokeRect(bx2, byy, bw2, 32);
+      ctx.fillStyle = cnt ? RARITIES[ri].color : '#4a4f58'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(`Salvage ${cnt} ${nm}`, bx2 + bw2 / 2, byy + 20); ctx.textAlign = 'left';
+    });
+    ctx.fillStyle = '#7f8794'; ctx.font = '10px sans-serif';
+    ctx.fillText(`Shards: ${RARITIES.map((r, i) => r.name[0] + player.shards[i]).join('  ')}`, leftX, py + ph - 12);
+  }
+
   if (total > maxRows) {
     ctx.fillStyle = '#6b7280'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
     ctx.fillText(`${invScroll + 1}–${invScroll + visible.length} of ${total}  ·  scroll ▲▼ / wheel`, rightX + colW, py + ph - 8); ctx.textAlign = 'left';
@@ -1338,9 +1407,24 @@ function drawMerge() {
   ctx.fillStyle = 'rgba(12,14,20,.98)'; ctx.fillRect(px, py, pw, ph);
   ctx.strokeStyle = '#7a5b2a'; ctx.lineWidth = 2; ctx.strokeRect(px, py, pw, ph);
   ctx.textAlign = 'left';
-  ctx.fillStyle = '#ffcf5c'; ctx.font = 'bold 20px sans-serif'; ctx.fillText('⚒  Forge — combine 3 into 1', px + 20, py + 32);
+  ctx.fillStyle = '#ffcf5c'; ctx.font = 'bold 19px sans-serif';
+  ctx.fillText(mergeTab === 'forge' ? '⚒  Forge — combine 3 into 1' : '✦  Shards — craft what you want', px + 20, py + 30);
   ctx.fillStyle = '#7f8794'; ctx.font = '12px sans-serif';
-  ctx.fillText('Pick 3 of the SAME type AND rarity (e.g. 3 Uncommon Bows) → 1 Rare Bow, random stats.', px + 20, py + 52);
+  ctx.fillText(mergeTab === 'forge'
+    ? 'Pick 3 of the SAME type AND rarity (e.g. 3 Uncommon Bows) → 1 Rare Bow, random stats.'
+    : `Salvage loot into shards (Inventory → ✖ Salvage). ${SHARD_COST} shards = any item of that rarity.`, px + 20, py + 50);
+
+  // Tabs
+  [['forge', '⚒ Forge'], ['shards', '✦ Shards']].forEach(([id, label], i) => {
+    const tw = 104, tx = px + 20 + i * (tw + 8), ty = py + 60;
+    mergeRects.push({ x: tx, y: ty, w: tw, h: 28, kind: 'tab', ref: id });
+    const on = mergeTab === id;
+    ctx.fillStyle = on ? '#3a2c12' : '#171a21'; ctx.fillRect(tx, ty, tw, 28);
+    ctx.strokeStyle = on ? '#ffcf5c' : '#3a4150'; ctx.lineWidth = on ? 2 : 1; ctx.strokeRect(tx, ty, tw, 28);
+    ctx.fillStyle = on ? '#ffcf5c' : '#9aa0a8'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(label, tx + tw / 2, ty + 19); ctx.textAlign = 'left';
+  });
+  if (mergeTab === 'shards') { drawShardsTab(px, py, pw, ph); return; }
 
   const cb = { x: px + pw - 52, y: py + 14, w: 40, h: 40, kind: 'close' };
   mergeRects.push(cb);
@@ -1350,7 +1434,7 @@ function drawMerge() {
 
   const narrow = W < 700; // portrait: stack sections
   const colW = narrow ? pw - 40 : pw / 2 - 30;
-  const leftX = px + 20, rightX = narrow ? px + 20 : px + pw / 2 + 10, top = py + 84;
+  const leftX = px + 20, rightX = narrow ? px + 20 : px + pw / 2 + 10, top = py + 110;
 
   // ---- the three forge slots + result preview + FORGE button ----
   const locked = mergeLockedRarity(), lockedType = mergeLockedType();
@@ -1439,10 +1523,75 @@ function drawMerge() {
   if (total > maxRows) { ctx.fillStyle = '#6b7280'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right'; ctx.fillText(`${mergeScroll + 1}–${mergeScroll + visible.length} of ${total}`, rightX + colW, py + ph - 8); ctx.textAlign = 'left'; }
 }
 
+// The Shards tab: shard counts, convert-up, and crafting the exact item you want.
+function drawShardsTab(px, py, pw, ph) {
+  const leftX = px + 20, colW = pw - 40, top = py + 110;
+  ctx.textAlign = 'left';
+
+  // --- shard counters (tap one to select which rarity you're crafting) ---
+  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 14px sans-serif'; ctx.fillText('Your shards — tap to select', leftX, top);
+  const cw = Math.min(120, (colW - 4 * 8) / 5), ch = 52;
+  RARITIES.forEach((r, i) => {
+    const x = leftX + i * (cw + 8), y = top + 10;
+    mergeRects.push({ x, y, w: cw, h: ch, kind: 'pickRarity', ref: i });
+    const sel = craftRarityIdx === i;
+    ctx.fillStyle = sel ? '#20242e' : '#171a21'; ctx.fillRect(x, y, cw, ch);
+    ctx.strokeStyle = sel ? r.color : '#2a2f38'; ctx.lineWidth = sel ? 3 : 1; ctx.strokeRect(x, y, cw, ch);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = r.color; ctx.font = 'bold 10px sans-serif'; ctx.fillText(r.name, x + cw / 2, y + 16);
+    ctx.fillStyle = player.shards[i] >= SHARD_COST ? '#5fe08b' : '#cfd4dc'; ctx.font = 'bold 17px sans-serif';
+    ctx.fillText(String(player.shards[i]), x + cw / 2, y + 38);
+    ctx.fillStyle = '#5a5f68'; ctx.font = '8px sans-serif'; ctx.fillText('/' + SHARD_COST, x + cw / 2, y + 48);
+    ctx.textAlign = 'left';
+  });
+
+  const R = RARITIES[craftRarityIdx];
+  let y = top + 10 + ch + 26;
+
+  // --- convert 3 lower shards into 1 of the next tier ---
+  if (craftRarityIdx < RARITIES.length - 1) {
+    const bw = Math.min(300, colW), bx = leftX;
+    const okc = player.shards[craftRarityIdx] >= SHARD_CONVERT;
+    mergeRects.push({ x: bx, y, w: bw, h: 30, kind: 'convert', ref: craftRarityIdx });
+    ctx.fillStyle = okc ? '#1c2a20' : '#171a21'; ctx.fillRect(bx, y, bw, 30);
+    ctx.strokeStyle = okc ? '#5fcf8f' : '#2a2f38'; ctx.lineWidth = 1; ctx.strokeRect(bx, y, bw, 30);
+    ctx.fillStyle = okc ? '#8be0a8' : '#4a4f58'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(`⇧  ${SHARD_CONVERT} ${R.name} → 1 ${RARITIES[craftRarityIdx + 1].name} shard`, bx + bw / 2, y + 20); ctx.textAlign = 'left';
+    y += 42;
+  }
+
+  // --- craft picker ---
+  const ready = canCraft(craftRarityIdx);
+  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 14px sans-serif';
+  ctx.fillText(`Craft any ${R.name} item`, leftX, y);
+  ctx.fillStyle = ready ? '#5fe08b' : '#ff9a9a'; ctx.font = 'bold 12px sans-serif';
+  ctx.fillText(ready ? `Ready — costs ${SHARD_COST} shards` : `You have ${player.shards[craftRarityIdx]}/${SHARD_COST} shards`, leftX + 190, y);
+  y += 12;
+
+  const cols = W < 700 ? 3 : 5, bwT = (colW - (cols - 1) * 8) / cols, bhT = 34;
+  ITEM_TYPES.forEach((t, i) => {
+    const cx = leftX + (i % cols) * (bwT + 8), cy = y + Math.floor(i / cols) * (bhT + 8);
+    if (cy + bhT > py + ph - 54) return;
+    mergeRects.push({ x: cx, y: cy, w: bwT, h: bhT, kind: 'craft', ref: t.type });
+    const hov = mouse.x >= cx && mouse.x <= cx + bwT && mouse.y >= cy && mouse.y <= cy + bhT;
+    ctx.fillStyle = ready ? (hov ? '#2a2f3a' : '#171a21') : '#131519'; ctx.fillRect(cx, cy, bwT, bhT);
+    ctx.strokeStyle = ready ? R.color : '#242830'; ctx.lineWidth = 1; ctx.strokeRect(cx, cy, bwT, bhT);
+    ctx.fillStyle = ready ? '#cfd4dc' : '#4a4f58'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(t.type, cx + bwT / 2, cy + 21); ctx.textAlign = 'left';
+  });
+
+  if (mergeMsg) { ctx.fillStyle = '#ffe08a'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(mergeMsg, px + pw / 2, py + ph - 16); ctx.textAlign = 'left'; }
+  else { ctx.fillStyle = '#6b7280'; ctx.font = '11px sans-serif'; ctx.fillText('Salvage items in the Inventory (✖ Salvage) to earn shards.', leftX, py + ph - 16); }
+}
+
 function handleMergeClick() {
   for (const r of mergeRects) {
     if (mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h) {
       if (r.kind === 'close') closeMerge();
+      else if (r.kind === 'tab') { returnMergeItems(); mergeTab = r.ref; mergeMsg = null; }
+      else if (r.kind === 'pickRarity') { craftRarityIdx = r.ref; mergeMsg = null; }
+      else if (r.kind === 'convert') convertShards(r.ref);
+      else if (r.kind === 'craft') craftFromShards(craftRarityIdx, r.ref);
       else if (r.kind === 'slot') removeFromMerge(r.ref);
       else if (r.kind === 'pick') addToMerge(r.ref);
       else if (r.kind === 'forge') doForge();
@@ -1474,7 +1623,12 @@ function handleInventoryClick() {
     if (mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h) {
       if (r.kind === 'close') showInv = false;
       else if (r.kind === 'forgeOpen') openMerge();
-      else if (r.kind === 'bag') equipItem(r.ref);
+      else if (r.kind === 'salvageToggle') salvageMode = !salvageMode;
+      else if (r.kind === 'salvageAll') salvageAllOfRarity(r.ref);
+      else if (r.kind === 'bag') {
+        if (salvageMode) { const rr = r.ref.rarity; if (salvageItem(r.ref)) fx.push({ kind: 'toast', text: `+1 ${rr.name} Shard`, life: 80, maxLife: 80 }); }
+        else equipItem(r.ref);
+      }
       else if (r.kind === 'slot') unequipSlot(r.ref);
       else if (r.kind === 'scrollUp') invScroll -= Math.max(1, invMaxRows - 1);
       else if (r.kind === 'scrollDown') invScroll += Math.max(1, invMaxRows - 1);
