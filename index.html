@@ -1503,6 +1503,8 @@ function drawMenu() {
   ctx.textAlign = 'center';
   ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 32px sans-serif'; ctx.fillText('THE GAME', W / 2, 84);
   ctx.fillStyle = '#9aa0a8'; ctx.font = '15px sans-serif'; ctx.fillText('Choose your class', W / 2, 112);
+  ctx.fillStyle = '#5fcf8f'; ctx.font = 'bold 12px sans-serif';
+  ctx.fillText(`v1.1 · ${W}×${H} · ${W < H ? 'PORTRAIT' : 'landscape'}`, W / 2, 132);
 
   menuRects = [];
   const gap = 20;
