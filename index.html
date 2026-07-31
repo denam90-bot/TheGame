@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>The Game — Prototype 1.1 (portrait)</title>
+<title>The Game — Prototype 1.2 (regions)</title>
 <style>
   html, body { margin: 0; height: 100%; background: #14161c; color: #cfd4dc; font-family: -apple-system, Segoe UI, Roboto, sans-serif; overflow: hidden; }
   #wrap { display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: center; gap: 10px; }
@@ -52,6 +52,37 @@ const WALL = 24;
 const ROOM = { left: WALL, top: WALL, right: W - WALL, bottom: H - WALL };
 const BOSS_EVERY = 5;
 const DOOR = { h: 104, cx: W - WALL / 2, cy: H / 2 };
+
+// --------------------------------------------------------------------
+//  REGIONS — each is a run of levels ending in a boss, with its own look,
+//  enemies and feel. After the last region the cycle repeats, harder.
+// --------------------------------------------------------------------
+const REGION_LEVELS = 5;   // levels per region (last one is the boss)
+const REGIONS = [
+  { name: 'Frostvale', tag: 'Frozen caverns', prop: 'ice',
+    floor: '#1b2430', grid: '#243243', wall: '#33465e', wallEdge: '#5b7 da', accent: '#9fd8ff',
+    enemy: '#5f8fb5', enemyHit: '#bfe4ff', boss: '#3f6fa5',
+    hp: 1.15, dmg: 0.95, spd: 0.85, count: 1.0, blurb: 'Thick-hided beasts. Slow, but they soak damage.' },
+  { name: 'Verdant Hollow', tag: 'Overgrown forest', prop: 'tree',
+    floor: '#18251c', grid: '#20301f', wall: '#2f4a33', wallEdge: '#4d7a52', accent: '#8fe0a0',
+    enemy: '#6f9f4f', enemyHit: '#d4f5a0', boss: '#3f7a3f',
+    hp: 0.85, dmg: 1.0, spd: 1.2, count: 1.35, blurb: 'Swarms of fast, fragile creatures.' },
+  { name: 'Emberwaste', tag: 'Scorched wastes', prop: 'rock',
+    floor: '#2a1a18', grid: '#3a2320', wall: '#5e3630', wallEdge: '#8a4f42', accent: '#ff9a5c',
+    enemy: '#c25f3f', enemyHit: '#ffb37a', boss: '#a8323f',
+    hp: 1.0, dmg: 1.35, spd: 1.0, count: 1.0, blurb: 'They hit hard. Do not get surrounded.' },
+  { name: 'Shadowmire', tag: 'Haunted swamp', prop: 'mush',
+    floor: '#1d1a2a', grid: '#272238', wall: '#3f3560', wallEdge: '#645488', accent: '#c9a0ff',
+    enemy: '#7a5fb0', enemyHit: '#dcc0ff', boss: '#5f3f9a',
+    hp: 1.1, dmg: 1.15, spd: 1.1, count: 1.15, blurb: 'Everything here is faster and meaner.' },
+];
+function regionIndexFor(level) { return Math.floor((level - 1) / REGION_LEVELS); }
+function currentRegion() { return REGIONS[regionIndexFor(game.level) % REGIONS.length]; }
+function regionLoop() { return Math.floor(regionIndexFor(game.level) / REGIONS.length); } // 0 on first pass
+function levelInRegion() { return ((game.level - 1) % REGION_LEVELS) + 1; }
+// Each completed cycle through all regions ramps everything up hard.
+function loopMult() { return 1 + regionLoop() * 0.85; }
+let props = [];
 
 // The playfield switches between landscape and portrait to match the device.
 function setResolution(w, h) {
@@ -405,7 +436,7 @@ if (isTouch) {
 // --------------------------------------------------------------------
 //  GAME STATE
 // --------------------------------------------------------------------
-const game = { menu: true, over: false, cleared: false, time: 0, kills: 0, level: 1, isBoss: false };
+const game = { menu: true, over: false, cleared: false, time: 0, kills: 0, level: 1, isBoss: false, banner: null };
 
 // --------------------------------------------------------------------
 //  PLAYER + STATS
@@ -757,29 +788,80 @@ function makeGrunt() {
   do { x = ROOM.left + 20 + Math.random() * (ROOM.right - ROOM.left - 40);
        y = ROOM.top + 20 + Math.random() * (ROOM.bottom - ROOM.top - 40); tries++;
   } while (Math.hypot(x - player.x, y - player.y) < 170 && tries < 30);
-  const hp = 70 + game.level * 24;
-  return { x, y, radius: 15, hp, maxHp: hp, speed: Math.min(2.9, 1.1 + Math.random() * 0.6 + game.level * 0.04),
-           dead: false, hitFlash: 0, touchCd: 0, slowT: 0, damage: 10 + Math.round(game.level * 2.4), spawnFx: 12, boss: false };
+  const R = currentRegion(), L = loopMult();
+  const hp = Math.round((70 + game.level * 24) * R.hp * L);
+  return { x, y, radius: 15, hp, maxHp: hp,
+           speed: Math.min(3.2, (1.1 + Math.random() * 0.6 + game.level * 0.04) * R.spd),
+           dead: false, hitFlash: 0, touchCd: 0, slowT: 0,
+           damage: Math.round((10 + game.level * 2.4) * R.dmg * L), spawnFx: 12, boss: false };
 }
 function makeBoss() {
-  const hp = 620 + game.level * 165;
-  return { x: W / 2, y: ROOM.top + 70, radius: 34, hp, maxHp: hp, speed: 0.9 + game.level * 0.025,
-           dead: false, hitFlash: 0, touchCd: 0, slowT: 0, damage: 20 + Math.round(game.level * 3.2), spawnFx: 18, boss: true };
+  const R = currentRegion(), L = loopMult();
+  const hp = Math.round((620 + game.level * 165) * R.hp * L);
+  return { x: W / 2, y: ROOM.top + 70, radius: 34, hp, maxHp: hp, speed: (0.9 + game.level * 0.025) * R.spd,
+           dead: false, hitFlash: 0, touchCd: 0, slowT: 0,
+           damage: Math.round((20 + game.level * 3.2) * R.dmg * L), spawnFx: 18, boss: true };
 }
 function setupLevel() {
   enemies = []; groundLoot = []; groundPotions = []; groundTomes = []; projectiles = []; meteors = []; fx = [];
   spawnQueue = []; spawnTimer = 20; game.time = 0; game.cleared = false; moveTarget = null;
   for (const s of player.spells) s.cd = 0; attack.active = false; attack.cooldown = 0;
   player.x = ROOM.left + 60; player.y = H / 2;
-  game.isBoss = (game.level % BOSS_EVERY === 0);
+  const R = currentRegion();
+  game.isBoss = (levelInRegion() === REGION_LEVELS);
+  // Announce a new region on its first level
+  if (levelInRegion() === 1) {
+    game.banner = { name: R.name, tag: R.tag, blurb: R.blurb, loop: regionLoop(), t: 190 };
+  }
+  makeProps(R);
   if (game.isBoss) {
-    const adds = 2 + Math.floor(game.level / BOSS_EVERY);
+    const adds = 2 + Math.floor(game.level / REGION_LEVELS);
     for (let i = 0; i < adds; i++) spawnQueue.push('grunt');
     spawnQueue.push('boss');
   } else {
-    const count = 8 + game.level * 2;
+    const count = Math.round((8 + game.level * 2) * R.count);
     for (let i = 0; i < count; i++) spawnQueue.push('grunt');
   }
+}
+
+// Scatter region-flavoured scenery (purely decorative, never blocks movement).
+function makeProps(R) {
+  props = [];
+  const n = 14 + Math.floor(Math.random() * 8);
+  for (let i = 0; i < n; i++) {
+    const x = ROOM.left + 18 + Math.random() * (ROOM.right - ROOM.left - 36);
+    const y = ROOM.top + 18 + Math.random() * (ROOM.bottom - ROOM.top - 36);
+    // keep the spawn corner and the exit clear-ish
+    if (x < ROOM.left + 110 && Math.abs(y - H / 2) < 70) continue;
+    if (x > ROOM.right - 110 && Math.abs(y - DOOR.cy) < 70) continue;
+    props.push({ x, y, s: 0.7 + Math.random() * 0.8, r: Math.random() * Math.PI * 2, kind: R.prop });
+  }
+}
+function drawProp(p, R) {
+  const s = p.s;
+  ctx.save(); ctx.translate(p.x, p.y);
+  if (p.kind === 'ice') {
+    ctx.fillStyle = 'rgba(150,210,255,.20)'; ctx.strokeStyle = 'rgba(190,235,255,.45)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(0, -16 * s); ctx.lineTo(7 * s, 4 * s); ctx.lineTo(0, 12 * s); ctx.lineTo(-7 * s, 4 * s); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  } else if (p.kind === 'tree') {
+    ctx.fillStyle = 'rgba(60,45,30,.55)'; ctx.fillRect(-2 * s, 0, 4 * s, 12 * s);
+    ctx.fillStyle = 'rgba(70,130,70,.35)'; ctx.strokeStyle = 'rgba(120,190,120,.35)'; ctx.lineWidth = 1;
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath(); ctx.moveTo(0, -20 * s + i * 7 * s); ctx.lineTo(11 * s, 0 + i * 7 * s - 4 * s); ctx.lineTo(-11 * s, 0 + i * 7 * s - 4 * s);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+  } else if (p.kind === 'rock') {
+    ctx.rotate(p.r);
+    ctx.fillStyle = 'rgba(90,55,45,.5)'; ctx.strokeStyle = 'rgba(160,90,70,.4)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(-11 * s, 6 * s); ctx.lineTo(-5 * s, -9 * s); ctx.lineTo(8 * s, -7 * s); ctx.lineTo(12 * s, 5 * s); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+  } else { // mush
+    ctx.fillStyle = 'rgba(180,160,220,.28)'; ctx.fillRect(-2 * s, -2 * s, 4 * s, 12 * s);
+    ctx.fillStyle = 'rgba(150,110,210,.42)'; ctx.strokeStyle = 'rgba(200,160,255,.45)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.ellipse(0, -3 * s, 11 * s, 7 * s, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+  ctx.restore();
 }
 
 // --------------------------------------------------------------------
@@ -1036,15 +1118,18 @@ function drawTome(x, y) {
 
 function draw() {
   if (game.menu) { drawMenu(); return; }
+  const REG = currentRegion();
   ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = '#1c2029'; ctx.fillRect(ROOM.left, ROOM.top, ROOM.right-ROOM.left, ROOM.bottom-ROOM.top);
-  ctx.strokeStyle = '#232833'; ctx.lineWidth = 1;
+  ctx.fillStyle = REG.floor; ctx.fillRect(ROOM.left, ROOM.top, ROOM.right-ROOM.left, ROOM.bottom-ROOM.top);
+  ctx.strokeStyle = REG.grid; ctx.lineWidth = 1;
   for (let x = ROOM.left; x < ROOM.right; x += 45) { ctx.beginPath(); ctx.moveTo(x, ROOM.top); ctx.lineTo(x, ROOM.bottom); ctx.stroke(); }
   for (let y = ROOM.top; y < ROOM.bottom; y += 45) { ctx.beginPath(); ctx.moveTo(ROOM.left, y); ctx.lineTo(ROOM.right, y); ctx.stroke(); }
 
-  ctx.fillStyle = game.isBoss ? '#4a2f3a' : '#3a4150';
+  for (const p of props) drawProp(p, REG);
+
+  ctx.fillStyle = game.isBoss ? '#4a2f3a' : REG.wall;
   ctx.fillRect(0, 0, W, WALL); ctx.fillRect(0, H - WALL, W, WALL); ctx.fillRect(0, 0, WALL, H); ctx.fillRect(W - WALL, 0, WALL, H);
-  ctx.strokeStyle = game.isBoss ? '#7a4b5c' : '#525b6d'; ctx.lineWidth = 2;
+  ctx.strokeStyle = game.isBoss ? '#7a4b5c' : REG.wallEdge; ctx.lineWidth = 2;
   ctx.strokeRect(ROOM.left, ROOM.top, ROOM.right-ROOM.left, ROOM.bottom-ROOM.top);
 
   if (moveTarget) { ctx.strokeStyle = 'rgba(150,200,255,.5)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(moveTarget.x, moveTarget.y, 8, 0, Math.PI*2); ctx.stroke(); }
@@ -1071,8 +1156,8 @@ function draw() {
   for (const e of enemies) {
     if (e.boss) boss = e;
     ctx.globalAlpha = e.spawnFx > 0 ? 0.4 + (18 - e.spawnFx)/18*0.6 : 1;
-    let col = e.boss ? '#a8323f' : '#b5573f';
-    if (e.hitFlash > 0) col = e.boss ? '#ffb35c' : '#ff8a5c'; else if (e.slowT > 0) col = e.boss ? '#7a6fb0' : '#6f86b5';
+    let col = e.boss ? REG.boss : REG.enemy;
+    if (e.hitFlash > 0) col = e.boss ? '#ffb35c' : REG.enemyHit; else if (e.slowT > 0) col = e.boss ? '#7a6fb0' : '#6f86b5';
     ctx.fillStyle = col; ctx.beginPath(); ctx.arc(e.x, e.y, e.radius, 0, Math.PI*2); ctx.fill();
     if (e.boss) { ctx.strokeStyle = '#ffd35c'; ctx.lineWidth = 3; ctx.stroke(); }
     else { ctx.globalAlpha = 1; drawBar(e.x - 20, e.y - e.radius - 10, 40, 4, e.hp / e.maxHp, '#6fcf5f'); }
@@ -1144,6 +1229,25 @@ function draw() {
   }
   if (settingsOpen) drawSettings();
   if (isTouch && !game.menu && !game.over && !showInv && !settingsOpen && !mergeOpen) drawTouchUI();
+  drawRegionBanner();
+}
+
+// Big fade-in/out title when you step into a new region.
+function drawRegionBanner() {
+  const b = game.banner; if (!b || b.t <= 0) return;
+  if (!showInv && !settingsOpen && !mergeOpen && !game.menu && !game.over) b.t--;
+  const R = currentRegion();
+  const a = Math.min(1, b.t / 45);
+  ctx.save(); ctx.globalAlpha = a; ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(0, H * 0.28, W, 116);
+  ctx.strokeStyle = R.accent; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(W * 0.12, H * 0.28); ctx.lineTo(W * 0.88, H * 0.28); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(W * 0.12, H * 0.28 + 116); ctx.lineTo(W * 0.88, H * 0.28 + 116); ctx.stroke();
+  ctx.fillStyle = R.accent; ctx.font = 'bold 30px sans-serif';
+  ctx.fillText(b.name + (b.loop > 0 ? '  ·  Cycle ' + (b.loop + 1) : ''), W / 2, H * 0.28 + 44);
+  ctx.fillStyle = '#cfd4dc'; ctx.font = '14px sans-serif'; ctx.fillText(b.tag, W / 2, H * 0.28 + 68);
+  ctx.fillStyle = '#8f97a3'; ctx.font = 'italic 12px sans-serif'; ctx.fillText(b.blurb, W / 2, H * 0.28 + 92);
+  ctx.textAlign = 'start'; ctx.restore();
 }
 
 // Draws the on-screen touch controls: joystick, attack, spells, potions, inventory, settings.
@@ -1248,9 +1352,12 @@ function drawHUD() {
   ctx.fillStyle = '#ffcf5c';
   ctx.fillText(`Crit ${Math.round(player.stats.critChance * 100)}%  ·  CritDmg ${Math.round(player.stats.critDamage * 100)}%  ·  SpellPwr ${player.spellPower}  ·  Haste ${player.stats.spellHaste || 0}%`, 16, 114);
 
+  const REG = currentRegion();
   ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'right';
-  ctx.fillStyle = game.isBoss ? '#ffb35c' : '#cfd4dc'; ctx.fillText(`Level ${game.level}${game.isBoss ? ' · BOSS' : ''}`, W - 34, 26);
-  ctx.fillStyle = '#cfd4dc'; ctx.fillText(`Enemies: ${enemies.length + spawnQueue.length}   Items: ${player.inventory.length} (I)`, W - 34, 46);
+  ctx.fillStyle = REG.accent;
+  ctx.fillText(`${REG.name}  ${levelInRegion()}/${REGION_LEVELS}${regionLoop() > 0 ? '  ·  Cycle ' + (regionLoop() + 1) : ''}`, W - 34, 26);
+  ctx.fillStyle = game.isBoss ? '#ffb35c' : '#cfd4dc'; ctx.fillText(`Level ${game.level}${game.isBoss ? ' · BOSS' : ''}`, W - 34, 46);
+  ctx.fillStyle = '#cfd4dc'; ctx.fillText(`Enemies: ${enemies.length + spawnQueue.length}   Items: ${player.inventory.length} (I)`, W - 34, 66);
   ctx.textAlign = 'start';
 
   if (isTouch) return; // on touch, spells are drawn as round buttons in drawTouchUI()
@@ -1658,7 +1765,7 @@ function drawMenu() {
   ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 32px sans-serif'; ctx.fillText('THE GAME', W / 2, 84);
   ctx.fillStyle = '#9aa0a8'; ctx.font = '15px sans-serif'; ctx.fillText('Choose your class', W / 2, 112);
   ctx.fillStyle = '#5fcf8f'; ctx.font = 'bold 12px sans-serif';
-  ctx.fillText(`v1.1 · ${W}×${H} · ${W < H ? 'PORTRAIT' : 'landscape'}`, W / 2, 132);
+  ctx.fillText(`v1.2 · ${W}×${H} · ${W < H ? 'PORTRAIT' : 'landscape'}`, W / 2, 132);
 
   menuRects = [];
   const gap = 20;
