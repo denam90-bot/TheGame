@@ -313,7 +313,7 @@ window.addEventListener('keydown', e => {
   if (e.key === ' ') { e.preventDefault(); tryAttack(); }
   if (game.over && k === 'r') { fullReset(); return; }        // restart on death
   if (k === 'c' && game.over) { game.menu = true; return; }   // back to class select
-  if (k === binds.inventory) { showInv = !showInv; if (showInv) invScroll = 0; }
+  if (k === binds.inventory) { showInv = !showInv; if (showInv) { invScroll = 0; salvageMode = false; salvageAllConfirm = 0; } }
   if (k === binds.health) drinkHealth();
   if (k === binds.mana) drinkMana();
   const si = spellIndexForKey(k);
@@ -409,7 +409,7 @@ if (isTouch) {
         if (hit === 'attack') touchAttack = true;
         else if (hit === 'potionH') drinkHealth();
         else if (hit === 'potionM') drinkMana();
-        else if (hit === 'inv') { showInv = !showInv; if (showInv) invScroll = 0; }
+        else if (hit === 'inv') { showInv = !showInv; if (showInv) { invScroll = 0; salvageMode = false; salvageAllConfirm = 0; } }
         else if (hit === 'settings') { settingsOpen = true; awaitingBind = null; }
         else if (hit.startsWith('spell')) castSpell(+hit.slice(5));
         continue;
@@ -1043,6 +1043,8 @@ let invScroll = 0, invMaxRows = 1;
 let mergeOpen = false, mergeSlots = [null, null, null], mergeRects = [], mergeScroll = 0, mergeMaxRows = 1, mergeMsg = null, mergeMsgT = 0;
 let mergeTab = 'forge';        // 'forge' | 'shards'
 let salvageMode = false;       // in the inventory, tapping an item destroys it for a shard
+                               // (always reset to OFF whenever the inventory is opened)
+let salvageAllConfirm = 0;     // frames left to confirm a "salvage everything" tap
 let craftRarityIdx = 2;        // which rarity the Shards tab is crafting
 
 // --------------------------------------------------------------------
@@ -1501,18 +1503,28 @@ function drawInventory() {
 
   // Bulk salvage helpers (only while salvaging) — huge time-saver with a full backpack
   if (salvageMode) {
+    if (salvageAllConfirm > 0) salvageAllConfirm--;
     const byy = py + ph - 48;
-    [[0, 'Normal'], [1, 'Uncommon'], [2, 'Rare']].forEach(([ri, nm], i) => {
-      const bw2 = Math.min(150, (colW - 16) / 3), bx2 = rightX + i * (bw2 + 8);
-      const cnt = player.inventory.filter(x => RARITIES.indexOf(x.rarity) === ri).length;
-      invRects.push({ x: bx2, y: byy, w: bw2, h: 32, kind: 'salvageAll', ref: ri });
-      ctx.fillStyle = cnt ? '#2a1a1e' : '#171a21'; ctx.fillRect(bx2, byy, bw2, 32);
-      ctx.strokeStyle = cnt ? '#7a4b5c' : '#2a2f38'; ctx.lineWidth = 1; ctx.strokeRect(bx2, byy, bw2, 32);
-      ctx.fillStyle = cnt ? RARITIES[ri].color : '#4a4f58'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(`Salvage ${cnt} ${nm}`, bx2 + bw2 / 2, byy + 20); ctx.textAlign = 'left';
+    const cells = [[0, 'Normal'], [1, 'Uncommon'], [2, 'Rare'], ['ALL', 'EVERYTHING']];
+    cells.forEach(([ri, nm], i) => {
+      const bw2 = (colW - 24) / 4, bx2 = rightX + i * (bw2 + 8);
+      const isAll = ri === 'ALL';
+      const cnt = isAll ? player.inventory.length : player.inventory.filter(x => RARITIES.indexOf(x.rarity) === ri).length;
+      invRects.push({ x: bx2, y: byy, w: bw2, h: 32, kind: isAll ? 'salvageEverything' : 'salvageAll', ref: ri });
+      const armed = isAll && salvageAllConfirm > 0;
+      ctx.fillStyle = armed ? '#6b1f22' : (cnt ? (isAll ? '#3a1418' : '#2a1a1e') : '#171a21');
+      ctx.fillRect(bx2, byy, bw2, 32);
+      ctx.strokeStyle = armed ? '#ff5c5c' : (cnt ? (isAll ? '#c0505c' : '#7a4b5c') : '#2a2f38');
+      ctx.lineWidth = armed ? 2 : 1; ctx.strokeRect(bx2, byy, bw2, 32);
+      ctx.fillStyle = cnt ? (isAll ? '#ff9a9a' : RARITIES[ri].color) : '#4a4f58';
+      ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(armed ? 'TAP AGAIN!' : (isAll ? `ALL (${cnt})` : `${nm} (${cnt})`), bx2 + bw2 / 2, byy + 20);
+      ctx.textAlign = 'left';
     });
-    ctx.fillStyle = '#7f8794'; ctx.font = '10px sans-serif';
-    ctx.fillText(`Shards: ${RARITIES.map((r, i) => r.name[0] + player.shards[i]).join('  ')}`, leftX, py + ph - 12);
+    ctx.fillStyle = salvageAllConfirm > 0 ? '#ff9a9a' : '#7f8794'; ctx.font = '10px sans-serif';
+    ctx.fillText(salvageAllConfirm > 0
+      ? `Destroy ALL ${player.inventory.length} items? Tap "TAP AGAIN!" to confirm.`
+      : `Shards: ${RARITIES.map((r, i) => r.name[0] + player.shards[i]).join('  ')}`, leftX, py + ph - 12);
   }
 
   if (total > maxRows) {
@@ -1753,8 +1765,17 @@ function handleInventoryClick() {
     if (mouse.x >= r.x && mouse.x <= r.x + r.w && mouse.y >= r.y && mouse.y <= r.y + r.h) {
       if (r.kind === 'close') showInv = false;
       else if (r.kind === 'forgeOpen') openMerge();
-      else if (r.kind === 'salvageToggle') salvageMode = !salvageMode;
-      else if (r.kind === 'salvageAll') salvageAllOfRarity(r.ref);
+      else if (r.kind === 'salvageToggle') { salvageMode = !salvageMode; salvageAllConfirm = 0; }
+      else if (r.kind === 'salvageAll') { salvageAllOfRarity(r.ref); salvageAllConfirm = 0; }
+      else if (r.kind === 'salvageEverything') {
+        if (salvageAllConfirm > 0) {   // second tap = confirmed
+          let n = 0;
+          for (let i = player.inventory.length - 1; i >= 0; i--) { player.shards[RARITIES.indexOf(player.inventory[i].rarity)]++; n++; }
+          player.inventory = [];
+          salvageAllConfirm = 0;
+          if (n) fx.push({ kind: 'toast', text: `Salvaged everything — ${n} shards`, life: 150, maxLife: 150 });
+        } else if (player.inventory.length) salvageAllConfirm = 210;  // ~3.5s to confirm
+      }
       else if (r.kind === 'bag') {
         if (salvageMode) { const rr = r.ref.rarity; if (salvageItem(r.ref)) fx.push({ kind: 'toast', text: `+1 ${rr.name} Shard`, life: 80, maxLife: 80 }); }
         else equipItem(r.ref);
