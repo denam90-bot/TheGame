@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>The Game — Prototype 1.5</title>
+<title>The Game — Prototype 1.6</title>
 <style>
   html, body { margin: 0; height: 100%; background: #14161c; color: #cfd4dc; font-family: -apple-system, Segoe UI, Roboto, sans-serif; overflow: hidden; }
   #wrap { display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: center; gap: 10px; }
@@ -542,7 +542,10 @@ function recomputeStats() {
   // Mana from INT
   const oldMaxMana = player.maxMana;
   player.maxMana = BASE.mana + INT * 6;
-  player.manaRegen = 0.12 + INT * 0.03;
+  // Regen is a small slice of your pool per second (INT raises the pool, so it
+  // still helps — but nowhere near enough to make mana potions pointless).
+  player.manaRegen = (0.9 + player.maxMana * 0.012) / 60;
+  player.stats.manaPerSec = player.manaRegen * 60;
   if (player.maxMana > oldMaxMana) player.mana += (player.maxMana - oldMaxMana);
   player.mana = Math.min(player.mana, player.maxMana);
 
@@ -586,7 +589,9 @@ function drinkHealth() {
 }
 function drinkMana() {
   if (game.menu || game.over || player.manaPotions <= 0 || player.mana >= player.maxMana) return;
-  player.mana = Math.min(player.maxMana, player.mana + POTION_MANA); player.manaPotions--; player.manaFlash = 12;
+  // Flat restores get worthless as your mana pool grows, so scale with max mana.
+  const restore = Math.max(POTION_MANA, Math.round(player.maxMana * 0.4));
+  player.mana = Math.min(player.maxMana, player.mana + restore); player.manaPotions--; player.manaFlash = 12;
 }
 
 // --------------------------------------------------------------------
@@ -1778,6 +1783,7 @@ function drawStatsBlock(x, y, w) {
     ['Spell Power', player.spellPower], ['Spell Haste', (s.spellHaste || 0) + '%'],
     ['Armor', s.armor], ['Move Speed', player.speed.toFixed(2)],
     ['Max HP', player.maxHp], ['Max Mana', player.maxMana],
+    ['Mana Regen', (player.stats.manaPerSec || 0).toFixed(1) + '/s'],
   ];
   const rows = Math.max(P.length, Math.ceil(S.length / 1));
   for (let i = 0; i < Math.max(P.length, S.length); i++) {
@@ -1857,7 +1863,7 @@ function drawMenu() {
   ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 32px sans-serif'; ctx.fillText('THE GAME', W / 2, 84);
   ctx.fillStyle = '#9aa0a8'; ctx.font = '15px sans-serif'; ctx.fillText('Choose your class', W / 2, 112);
   ctx.fillStyle = '#5fcf8f'; ctx.font = 'bold 12px sans-serif';
-  ctx.fillText(`v1.5 · ${W}×${H} · ${W < H ? 'PORTRAIT' : 'landscape'}`, W / 2, 132);
+  ctx.fillText(`v1.6 · ${W}×${H} · ${W < H ? 'PORTRAIT' : 'landscape'}`, W / 2, 132);
 
   menuRects = [];
   const gap = 20;
