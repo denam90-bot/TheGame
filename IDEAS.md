@@ -4,6 +4,7 @@ _Running list of what to build next. Add anything anytime; check items off as th
 _2D top-down ARPG (Diablo/PoE-like), single file: `game.html`._
 
 ## Up next — HIGH priority (in order)
+- [ ] **XP & character levels** — kills grant experience; levelling up raises the character level and **spells scale/level with it** (instead of only via tomes). Open questions to decide: does XP level the character (granting stat points / auto spell ranks), or feed each spell separately? Suggested: character level → +primary stat and +1 spell rank every N levels; XP bar in the HUD; enemies grant XP scaled by region/cycle.
 - [ ] **Auras (passive spells)** — collectable passives, **max 4 equipped** (swappable). Dropped by region bosses / rare relics; level up like spell tomes (stacking effect per level). Proposed pool:
   - **Precision** — +Crit chance
   - **Brutality** — +Crit damage
@@ -33,6 +34,7 @@ _2D top-down ARPG (Diablo/PoE-like), single file: `game.html`._
 - [ ] **Sound** — SFX for hits, crits, spells, loot pickup, level up, boss spawn, forge; maybe background music. Needs a mute toggle in Settings.
 
 ## Done
+- [x] **Weapon variants + Attack Speed + cooldown rebalance** — weapons roll one of several PRIMARY stats so a type can suit several classes (Dagger = AGI/AtkSpeed/Crit **or** INT/Crit/CritDmg; Sword = STR or AGI; Mace = STR or INT), with secondaries drawn from a pool matching that primary, and a 3rd stat line on higher rarities. New **Attack Speed** secondary. Big AoE spells rebalanced to long cooldowns with far higher damage (Meteor 6s/300, Heroic Leap 5s/230, Arrow Rain 4s/150) while spammables stay fast; Spell Haste (= cooldown reduction) makes those nukes a real build choice. Spell bar now shows cooldowns in seconds.
 - [x] **Regions / biomes** — 4 themed regions of 5 levels each ending in a boss: **Frostvale** (tanky, slow), **Verdant Hollow** (fast swarms), **Emberwaste** (hits hardest), **Shadowmire** (fast + mean). Each has its own palette, walls, enemy colours and scenery props, plus an entry banner. After Shadowmire the cycle repeats as **Cycle 2, 3…** with a big difficulty ramp (×1.85 per cycle) so late-game gear stops one-shotting. Story/lore to be written later.
 - [x] **Shards (salvage & craft)** — destroy unwanted loot for 1 shard of its rarity (Inventory → ✖ Salvage, with bulk "salvage all Normal/Uncommon/Rare"). **10 shards of a rarity = craft ANY item type of that rarity** with random stats (Forge → ✦ Shards tab). Junk flows upward via **3 lower shards → 1 higher shard**. Costs are constants (SHARD_COST / SHARD_CONVERT) so they're easy to tune.
 - [x] **WoW-style stat rework** — STR/AGI/INT are PRIMARY (gold in UI); Armor, Speed, Crit, Crit Dmg, Spell Power, Spell Haste are SECONDARY (grey). Staff/Wand are caster weapons granting **Spell Power instead of Attack Damage** (spell damage now scales with it). New 1H **Dagger** (fast, AGI) and Sword pair with off-hands; new caster off-hands **Tome** (INT) and **Orb** (Spell Power), alongside Shield. New rollable **Spell Haste** cuts spell cooldowns.
