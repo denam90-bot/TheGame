@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>The Game — Prototype 1.3 (weapons)</title>
+<title>The Game — Prototype 1.4</title>
 <style>
   html, body { margin: 0; height: 100%; background: #14161c; color: #cfd4dc; font-family: -apple-system, Segoe UI, Roboto, sans-serif; overflow: hidden; }
   #wrap { display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: center; gap: 10px; }
@@ -826,6 +826,8 @@ function makeBoss() {
 function setupLevel() {
   enemies = []; groundLoot = []; groundPotions = []; groundTomes = []; projectiles = []; meteors = []; fx = [];
   spawnQueue = []; spawnTimer = 20; game.time = 0; game.cleared = false; moveTarget = null;
+  // Salvage is a destructive mode — never let it survive into a new level.
+  salvageMode = false; salvageAllConfirm = 0;
   for (const s of player.spells) s.cd = 0; attack.active = false; attack.cooldown = 0;
   player.x = ROOM.left + 60; player.y = H / 2;
   const R = currentRegion();
@@ -1088,7 +1090,7 @@ function convertShards(rarIdx) {
 }
 const mergePanel = { x: 0, y: 0, w: 0, h: 0 };
 function openMerge() { mergeOpen = true; showInv = false; mergeSlots = [null, null, null]; mergeScroll = 0; mergeMsg = null; }
-function closeMerge() { returnMergeItems(); mergeOpen = false; }
+function closeMerge() { returnMergeItems(); mergeOpen = false; salvageMode = false; salvageAllConfirm = 0; }
 function returnMergeItems() { for (let i = 0; i < 3; i++) { if (mergeSlots[i]) { player.inventory.push(mergeSlots[i]); mergeSlots[i] = null; } } }
 function itemTypeOf(it) { return it.type || it.name.split(' ').slice(1).join(' '); } // fallback for older items
 function mergeLockedRarity() { const f = mergeSlots.find(s => s); return f ? f.rarity : null; }
@@ -1809,7 +1811,7 @@ function drawMenu() {
   ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 32px sans-serif'; ctx.fillText('THE GAME', W / 2, 84);
   ctx.fillStyle = '#9aa0a8'; ctx.font = '15px sans-serif'; ctx.fillText('Choose your class', W / 2, 112);
   ctx.fillStyle = '#5fcf8f'; ctx.font = 'bold 12px sans-serif';
-  ctx.fillText(`v1.3 · ${W}×${H} · ${W < H ? 'PORTRAIT' : 'landscape'}`, W / 2, 132);
+  ctx.fillText(`v1.4 · ${W}×${H} · ${W < H ? 'PORTRAIT' : 'landscape'}`, W / 2, 132);
 
   menuRects = [];
   const gap = 20;
