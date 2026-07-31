@@ -4,6 +4,21 @@ _Running list of what to build next. Add anything anytime; check items off as th
 _2D top-down ARPG (Diablo/PoE-like), single file: `game.html`._
 
 ## Up next — HIGH priority (in order)
+- [ ] **Auras (passive spells)** — collectable passives, **max 4 equipped** (swappable). Dropped by region bosses / rare relics; level up like spell tomes (stacking effect per level). Proposed pool:
+  - **Precision** — +Crit chance
+  - **Brutality** — +Crit damage
+  - **Concussive Blows (Bash)** — chance on hit to stun briefly *(needs an internal cooldown or diminishing returns, otherwise it perma-locks packs)*
+  - **Alacrity** — +attack speed and +spell haste
+  - **Bloodthirst (leech)** — heal for a % of damage dealt *(scales dangerously with big hits — cap it per hit)*
+  - **Thorns** — reflect damage back to attackers
+  - **Frost Aura** — enemies near you are permanently slowed (great in Verdant Hollow swarms)
+  - **Immolation** — constant AoE burn around you *(strong vs swarms; keep the damage low)*
+  - **Fortitude** — +max HP and +Armor
+  - **Clarity** — +mana regen and cheaper spells
+  - **Executioner** — bonus damage to enemies below 25% HP
+  - **Momentum** — move speed spikes after each kill
+  - **Chain Reaction** — kills have a chance to explode, damaging nearby enemies
+  - UI: 4 aura slots shown in the HUD, managed from the inventory; auras are passive (no key needed).
 - [ ] **Puzzle for legendary item** — a complex puzzle players must solve to earn a legendary
 - [ ] **Hidden rooms** — secret rooms with extra loot to discover
 
