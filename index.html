@@ -63,22 +63,29 @@ const RARITIES = [
 const RARITY_TOTAL = RARITIES.reduce((s, r) => s + r.weight, 0);
 
 // Weapon definitions: melee variants swing arcs; bow shoots arrows.
+// twoHanded weapons cannot be used together with an Off-hand (shield).
 const WEAPONS = {
-  fist:  { ranged: false, arc: 0.60, reach: 46, spd: 1.15, base: 0,  color: '#dbe7f5', attr: null  },
-  sword: { ranged: false, arc: 0.75, reach: 66, spd: 1.05, base: 10, color: '#cfe6ff', attr: 'STR' },
-  axe:   { ranged: false, arc: 1.15, reach: 72, spd: 0.75, base: 15, color: '#ffcaa0', attr: 'STR' },
-  mace:  { ranged: false, arc: 0.95, reach: 58, spd: 0.85, base: 12, color: '#e6d7a3', attr: 'STR' },
-  bow:   { ranged: true,  arc: 0,    reach: 0,  spd: 1.05, base: 9,  color: '#bfe6a0', attr: 'AGI' },
-  staff: { ranged: false, arc: 0.70, reach: 60, spd: 0.95, base: 8,  color: '#c9a0ff', attr: 'INT' },
+  fist:      { ranged: false, arc: 0.60, reach: 46, spd: 1.15, base: 0,  color: '#dbe7f5', attr: null  },
+  sword:     { ranged: false, arc: 0.75, reach: 66, spd: 1.05, base: 10, color: '#cfe6ff', attr: 'STR' },
+  axe:       { ranged: false, arc: 1.15, reach: 72, spd: 0.75, base: 15, color: '#ffcaa0', attr: 'STR' },
+  mace:      { ranged: false, arc: 0.95, reach: 58, spd: 0.85, base: 12, color: '#e6d7a3', attr: 'STR' },
+  greatsword:{ ranged: false, arc: 1.05, reach: 84, spd: 0.80, base: 20, color: '#9fd0ff', attr: 'STR', twoHanded: true },
+  battleaxe: { ranged: false, arc: 1.45, reach: 90, spd: 0.58, base: 28, color: '#ffb37a', attr: 'STR', twoHanded: true },
+  warhammer: { ranged: false, arc: 1.20, reach: 74, spd: 0.66, base: 24, color: '#e8c97a', attr: 'STR', twoHanded: true },
+  bow:       { ranged: true,  arc: 0,    reach: 0,  spd: 1.05, base: 9,  color: '#bfe6a0', attr: 'AGI', twoHanded: true },
+  staff:     { ranged: false, arc: 0.70, reach: 60, spd: 0.95, base: 8,  color: '#c9a0ff', attr: 'INT', twoHanded: true },
 };
 
 // slot + how the item's value is applied. 'ATTR' rolls a random attribute.
 const ITEM_TYPES = [
-  { type: 'Sword',  slot: 'Weapon',   weapon: 'sword' },
-  { type: 'Axe',    slot: 'Weapon',   weapon: 'axe'   },
-  { type: 'Mace',   slot: 'Weapon',   weapon: 'mace'  },
-  { type: 'Bow',    slot: 'Weapon',   weapon: 'bow'   },
-  { type: 'Staff',  slot: 'Weapon',   weapon: 'staff' },
+  { type: 'Sword',     slot: 'Weapon', weapon: 'sword' },
+  { type: 'Axe',       slot: 'Weapon', weapon: 'axe'   },
+  { type: 'Mace',      slot: 'Weapon', weapon: 'mace'  },
+  { type: 'Greatsword',slot: 'Weapon', weapon: 'greatsword' },
+  { type: 'Battle Axe',slot: 'Weapon', weapon: 'battleaxe'  },
+  { type: 'Warhammer', slot: 'Weapon', weapon: 'warhammer'  },
+  { type: 'Bow',       slot: 'Weapon', weapon: 'bow'   },
+  { type: 'Staff',     slot: 'Weapon', weapon: 'staff' },
   { type: 'Shield', slot: 'Off-hand', stat: 'Armor'   },
   { type: 'Helm',   slot: 'Helm',     stat: 'Armor'   },
   { type: 'Boots',  slot: 'Boots',    stat: 'Speed'   },
@@ -429,6 +436,7 @@ function recomputeStats() {
   player.stats.critDamage = 1.5 + critDmg / 100;
 }
 
+function isTwoHanded(item) { return !!(item && item.weapon && WEAPONS[item.weapon] && WEAPONS[item.weapon].twoHanded); }
 function equipItem(item) {
   const idx = player.inventory.indexOf(item); if (idx === -1) return;
   player.inventory.splice(idx, 1);
@@ -440,6 +448,14 @@ function equipItem(item) {
   }
   const prev = player.equipped[target]; player.equipped[target] = item;
   if (prev) player.inventory.push(prev);
+  // Two-handed weapons and off-hands are mutually exclusive.
+  if (target === 'Weapon' && isTwoHanded(item) && player.equipped['Off-hand']) {
+    player.inventory.push(player.equipped['Off-hand']); player.equipped['Off-hand'] = null;
+    fx.push({ kind: 'toast', text: 'Two-handed weapon — shield unequipped', life: 130, maxLife: 130 });
+  } else if (target === 'Off-hand' && isTwoHanded(player.equipped.Weapon)) {
+    player.inventory.push(player.equipped.Weapon); player.equipped.Weapon = null;
+    fx.push({ kind: 'toast', text: 'Shield equipped — two-handed weapon unequipped', life: 130, maxLife: 130 });
+  }
   recomputeStats();
 }
 function unequipSlot(slot) {
@@ -1113,7 +1129,7 @@ function drawHUD() {
   const a = player.attrs;
   ctx.fillStyle = '#d7c98a'; ctx.fillText(`${player.class ? player.class.name + '  ·  ' : ''}STR ${a.STR}  AGI ${a.AGI}  INT ${a.INT}`, 16, 82);
   ctx.fillStyle = '#cfd4dc';
-  ctx.fillText(`AtkDmg ${player.stats.attackDamage}  AtkSpd ${player.stats.attacksPerSec.toFixed(2)}/s  ARM ${player.stats.armor}  [${player.weapon.key}${player.weapon.ranged ? ' · ranged' : ''}]`, 16, 98);
+  ctx.fillText(`AtkDmg ${player.stats.attackDamage}  AtkSpd ${player.stats.attacksPerSec.toFixed(2)}/s  ARM ${player.stats.armor}  [${player.weapon.key}${WEAPONS[player.weapon.key] && WEAPONS[player.weapon.key].twoHanded ? ' · 2H' : ''}${player.weapon.ranged ? ' · ranged' : ''}]`, 16, 98);
   ctx.fillStyle = '#ffcf5c';
   ctx.fillText(`Crit ${Math.round(player.stats.critChance * 100)}%  ·  Crit Dmg ${Math.round(player.stats.critDamage * 100)}%`, 16, 114);
 
@@ -1184,6 +1200,8 @@ function drawInventory() {
     if (it) {
       ctx.fillStyle = it.rarity.color; ctx.font = 'bold 14px sans-serif'; ctx.fillText(it.name, nameX, yy + 15);
       ctx.fillStyle = '#9aa0a8'; ctx.font = '11px sans-serif'; ctx.fillText(itemStatText(it), x + 12, yy + 30);
+    } else if (slotLabel === 'Off-hand' && isTwoHanded(player.equipped.Weapon)) {
+      ctx.fillStyle = '#7a5b2a'; ctx.font = 'italic 12px sans-serif'; ctx.fillText('— blocked: two-handed weapon —', nameX, yy + 15);
     } else { ctx.fillStyle = '#41474f'; ctx.font = '13px sans-serif'; ctx.fillText('— empty —', nameX, yy + 15); }
   }
 
@@ -1355,6 +1373,7 @@ function itemStatText(it) {
   let s = statLabel(it.stat, it.value);
   if (it.bonusStat) s += `  ${statLabel(it.bonusStat, it.bonusValue)}`;
   if (it.bonusStat2) s += `  ${statLabel(it.bonusStat2, it.bonusValue2)}`;
+  if (isTwoHanded(it)) s += '  · 2H';
   return s;
 }
 function handleInventoryClick() {
