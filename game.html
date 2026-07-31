@@ -126,7 +126,7 @@ function makeItem(minIdx = 0) {
 function buildItem(rar, t) {
   const rarIdx = RARITIES.indexOf(rar);
   const scale = 3 + Math.floor(Math.random() * 6) + Math.floor(game.level * 0.8);
-  const item = { name: `${rar.name} ${t.type}`, rarity: rar, slot: t.slot };
+  const item = { name: `${rar.name} ${t.type}`, rarity: rar, slot: t.slot, type: t.type };
   if (t.weapon) {
     const wd = WEAPONS[t.weapon];
     item.weapon = t.weapon; item.ranged = wd.ranged;
@@ -870,12 +870,15 @@ const mergePanel = { x: 0, y: 0, w: 0, h: 0 };
 function openMerge() { mergeOpen = true; showInv = false; mergeSlots = [null, null, null]; mergeScroll = 0; mergeMsg = null; }
 function closeMerge() { returnMergeItems(); mergeOpen = false; }
 function returnMergeItems() { for (let i = 0; i < 3; i++) { if (mergeSlots[i]) { player.inventory.push(mergeSlots[i]); mergeSlots[i] = null; } } }
+function itemTypeOf(it) { return it.type || it.name.split(' ').slice(1).join(' '); } // fallback for older items
 function mergeLockedRarity() { const f = mergeSlots.find(s => s); return f ? f.rarity : null; }
+function mergeLockedType() { const f = mergeSlots.find(s => s); return f ? itemTypeOf(f) : null; }
 function mergeCount() { return mergeSlots.filter(s => s).length; }
 function canForge() { const r = mergeLockedRarity(); return mergeCount() === 3 && r && RARITIES.indexOf(r) < RARITIES.length - 1; }
 function addToMerge(it) {
-  const locked = mergeLockedRarity();
+  const locked = mergeLockedRarity(), lockedType = mergeLockedType();
   if (locked && it.rarity !== locked) { mergeMsg = 'All 3 items must be the same rarity'; mergeMsgT = 120; return; }
+  if (lockedType && itemTypeOf(it) !== lockedType) { mergeMsg = `All 3 must be the same type (${lockedType})`; mergeMsgT = 120; return; }
   if (RARITIES.indexOf(it.rarity) >= RARITIES.length - 1) { mergeMsg = 'Legendary is already the highest rarity'; mergeMsgT = 120; return; }
   const slot = mergeSlots.findIndex(s => !s);
   if (slot === -1) { mergeMsg = 'All 3 slots are full — tap FORGE'; mergeMsgT = 120; return; }
@@ -887,9 +890,8 @@ function doForge() {
   if (!canForge()) return;
   const rarIdx = RARITIES.indexOf(mergeLockedRarity());
   const newRar = RARITIES[rarIdx + 1];
-  // Result keeps one of the consumed items' types (picked at random), with fresh random stats.
-  const pick = mergeSlots[Math.floor(Math.random() * 3)];
-  const t = ITEM_TYPES.find(x => x.type === pick.name.split(' ').slice(1).join(' ')) || ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
+  // Result is the SAME type as the three inputs, one rarity up, with fresh random stats.
+  const t = ITEM_TYPES.find(x => x.type === mergeLockedType()) || ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
   const out = buildItem(newRar, t);
   mergeSlots = [null, null, null];
   player.inventory.push(out);
@@ -1258,7 +1260,7 @@ function drawMerge() {
   ctx.textAlign = 'left';
   ctx.fillStyle = '#ffcf5c'; ctx.font = 'bold 20px sans-serif'; ctx.fillText('⚒  Forge — combine 3 into 1', px + 20, py + 32);
   ctx.fillStyle = '#7f8794'; ctx.font = '12px sans-serif';
-  ctx.fillText('Pick 3 items of the SAME rarity → get 1 of the next rarity up, with random stats.', px + 20, py + 52);
+  ctx.fillText('Pick 3 of the SAME type AND rarity (e.g. 3 Uncommon Bows) → 1 Rare Bow, random stats.', px + 20, py + 52);
 
   const cb = { x: px + pw - 52, y: py + 14, w: 40, h: 40, kind: 'close' };
   mergeRects.push(cb);
@@ -1269,9 +1271,9 @@ function drawMerge() {
   const colW = pw / 2 - 30, leftX = px + 20, rightX = px + pw / 2 + 10, top = py + 84;
 
   // ---- LEFT: the three forge slots + result preview + FORGE button ----
-  const locked = mergeLockedRarity();
+  const locked = mergeLockedRarity(), lockedType = mergeLockedType();
   ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 15px sans-serif';
-  ctx.fillText(locked ? `Slots — ${locked.name}` : 'Slots — tap items on the right', leftX, top);
+  ctx.fillText(locked ? `Slots — ${locked.name} ${lockedType}` : 'Slots — tap items on the right', leftX, top);
   const sw = (colW - 16) / 3, sh = 74;
   for (let i = 0; i < 3; i++) {
     const sx = leftX + i * (sw + 8), sy = top + 14;
@@ -1296,9 +1298,10 @@ function drawMerge() {
     const i0 = RARITIES.indexOf(locked);
     if (i0 < RARITIES.length - 1) {
       ctx.fillText('Result:', leftX, ry);
-      ctx.fillStyle = locked.color; ctx.font = 'bold 14px sans-serif'; ctx.fillText(`3× ${locked.name}`, leftX + 56, ry);
-      ctx.fillStyle = '#9aa0a8'; ctx.font = '14px sans-serif'; ctx.fillText('→', leftX + 150, ry);
-      ctx.fillStyle = RARITIES[i0 + 1].color; ctx.font = 'bold 15px sans-serif'; ctx.fillText(`1× ${RARITIES[i0 + 1].name}`, leftX + 172, ry);
+      ctx.fillStyle = locked.color; ctx.font = 'bold 13px sans-serif'; ctx.fillText(`3× ${locked.name} ${lockedType}`, leftX + 52, ry);
+      const wdt = ctx.measureText(`3× ${locked.name} ${lockedType}`).width;
+      ctx.fillStyle = '#9aa0a8'; ctx.font = '14px sans-serif'; ctx.fillText('→', leftX + 58 + wdt, ry);
+      ctx.fillStyle = RARITIES[i0 + 1].color; ctx.font = 'bold 14px sans-serif'; ctx.fillText(`1× ${RARITIES[i0 + 1].name} ${lockedType}`, leftX + 78 + wdt, ry);
     }
   } else { ctx.fillText('Result: pick 3 matching items', leftX, ry); }
 
@@ -1312,8 +1315,12 @@ function drawMerge() {
   ctx.fillText(ready ? '⚒  FORGE' : `FORGE  (${mergeCount()}/3)`, fb.x + fb.w / 2, fb.y + 33); ctx.textAlign = 'left';
   if (mergeMsg) { ctx.fillStyle = '#ffe08a'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(mergeMsg, leftX + colW / 2, fb.y + 70); ctx.textAlign = 'left'; }
 
-  // ---- RIGHT: scrollable backpack, non-matching rarities dimmed ----
-  const list = player.inventory.slice().reverse();
+  // ---- RIGHT: scrollable backpack, grouped so matching sets sit together ----
+  const list = player.inventory.slice().sort((a, b) => {
+    const ra = RARITIES.indexOf(b.rarity) - RARITIES.indexOf(a.rarity);
+    if (ra !== 0) return ra;
+    return itemTypeOf(a).localeCompare(itemTypeOf(b));
+  });
   const total = list.length;
   let by = top + 14;
   const rowH = 34;
@@ -1336,7 +1343,7 @@ function drawMerge() {
   if (total === 0) { ctx.fillStyle = '#7f8794'; ctx.font = '13px sans-serif'; ctx.fillText('Empty — go kill things.', rightX + 4, by + 16); }
   const visible = list.slice(mergeScroll, mergeScroll + maxRows);
   for (const it of visible) {
-    const selectable = (!locked || it.rarity === locked) && RARITIES.indexOf(it.rarity) < RARITIES.length - 1;
+    const selectable = (!locked || (it.rarity === locked && itemTypeOf(it) === lockedType)) && RARITIES.indexOf(it.rarity) < RARITIES.length - 1;
     mergeRects.push({ x: rightX, y: by, w: colW, h: rowH - 5, kind: 'pick', ref: it });
     ctx.globalAlpha = selectable ? 1 : 0.32;
     ctx.fillStyle = '#171a21'; ctx.fillRect(rightX, by, colW, rowH - 5);

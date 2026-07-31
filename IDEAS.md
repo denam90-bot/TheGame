@@ -19,7 +19,7 @@ _2D top-down ARPG (Diablo/PoE-like), single file: `game.html`._
 
 ## Done
 - [x] **Two-handed weapons block shields** — new 1H/2H split: 1H Sword/Axe/Mace can pair with an Off-hand shield; 2H Greatsword/Battle Axe/Warhammer/Staff/Bow hit harder but auto-unequip the shield (and vice versa), with a toast. Off-hand slot shows "blocked", items tagged "· 2H".
-- [x] **Forge (merge items)** — new ⚒ Forge screen (opened from the inventory): stage 3 items of the same rarity into 3 slots, press FORGE, get 1 item of the next rarity up with freshly rolled stats. Result keeps the type of one consumed item. Rarity locks after the first pick; Legendary can't be an input; closing returns staged items. Scrollable list, works on touch + desktop.
+- [x] **Forge (merge items)** — new ⚒ Forge screen (opened from the inventory): stage 3 items of the SAME TYPE **and** rarity (e.g. 3 Uncommon Bows), press FORGE, get 1 of that same type one rarity up (Rare Bow) with freshly rolled stats. Type+rarity lock after the first pick and non-matching items dim; list is grouped so sets are easy to find. Legendary can't be an input; closing returns staged items. Works on touch + desktop.
 - [x] **Cap health potions** — health and mana potions capped at 5 each; when full, flasks stay on the ground (with a toast) instead of being wasted. HUD shows `x/5`.
 - [x] **Free-placement touch movement** — floating joystick spawns wherever you touch (no longer locked to the left half); action buttons still take priority. Settings has a Joystick ↔ Tap-to-move toggle, saved across sessions.
 - [x] **Scrollable backpack** — inventory now pages through all items (▲/▼ buttons + mouse wheel), with "X–Y of N" indicator and scrollbar. Fixes not being able to see past ~9 items.
