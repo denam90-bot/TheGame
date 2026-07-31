@@ -43,12 +43,20 @@
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
-const W = canvas.width, H = canvas.height;
+let W = canvas.width, H = canvas.height;
 
 const WALL = 24;
 const ROOM = { left: WALL, top: WALL, right: W - WALL, bottom: H - WALL };
 const BOSS_EVERY = 5;
 const DOOR = { h: 104, cx: W - WALL / 2, cy: H / 2 };
+
+// The playfield switches between landscape and portrait to match the device.
+function setResolution(w, h) {
+  if (W === w && H === h) return;
+  canvas.width = w; canvas.height = h; W = w; H = h;
+  ROOM.left = WALL; ROOM.top = WALL; ROOM.right = W - WALL; ROOM.bottom = H - WALL;
+  DOOR.cx = W - WALL / 2; DOOR.cy = H / 2;
+}
 
 // --------------------------------------------------------------------
 //  RARITY + ITEMS
@@ -257,27 +265,30 @@ let touchAttack = false;
 const touchRoles = {}; // touch identifier -> role string
 
 // Round action buttons on the right; positions in internal canvas coords.
+// Buttons are anchored to the screen edges so they land correctly in both orientations.
 function touchButtons() {
   return [
-    { id: 'attack',   x: 835, y: 466, r: 46 },
-    { id: 'potionH',  x: 690, y: 372, r: 22 },
-    { id: 'potionM',  x: 752, y: 372, r: 22 },
-    { id: 'inv',      x: 866, y: 150, r: 22 },
-    { id: 'settings', x: 866, y: 100, r: 22 },
+    { id: 'attack',   x: W - 64,  y: H - 94,  r: 46 },
+    { id: 'potionH',  x: W - 210, y: H - 188, r: 22 },
+    { id: 'potionM',  x: W - 148, y: H - 188, r: 22 },
+    { id: 'inv',      x: W - 34,  y: 150,     r: 22 },
+    { id: 'settings', x: W - 34,  y: 100,     r: 22 },
   ];
 }
 function spellBtn(i) {
-  const gx = [690, 752, 690, 752][i], gy = [430, 430, 492, 492][i];
+  const gx = [W - 210, W - 148, W - 210, W - 148][i], gy = [H - 130, H - 130, H - 68, H - 68][i];
   return { x: gx, y: gy, r: 28 };
 }
+// Pick portrait or landscape playfield, then scale it to fill the screen.
 function resizeCanvas() {
+  if (isTouch) setResolution(...(window.innerHeight > window.innerWidth ? [560, 900] : [900, 560]));
   const padW = isTouch ? 0 : 24, padH = isTouch ? 0 : 64;
   const scale = Math.min((window.innerWidth - padW) / W, (window.innerHeight - padH) / H);
   canvas.style.width = (W * scale) + 'px';
   canvas.style.height = (H * scale) + 'px';
 }
 window.addEventListener('resize', resizeCanvas);
-window.addEventListener('orientationchange', resizeCanvas);
+window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 60));
 
 if (isTouch) {
   canvas.addEventListener('touchstart', e => {
@@ -1007,7 +1018,7 @@ function draw() {
   ctx.lineTo(player.x + Math.cos(player.facing)*(player.radius+8), player.y + Math.sin(player.facing)*(player.radius+8)); ctx.stroke();
 
   if (boss) {
-    const bw = 520, bx = (W - bw) / 2, by = 40;
+    const bw = Math.min(520, W - 80), bx = (W - bw) / 2, by = 40;
     drawBar(bx, by, bw, 14, boss.hp / boss.maxHp, '#e0483d');
     ctx.strokeStyle = '#ffd35c'; ctx.lineWidth = 2; ctx.strokeRect(bx, by, bw, 14);
     ctx.fillStyle = '#ffd35c'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(`BOSS — Level ${game.level}`, W / 2, by - 6); ctx.textAlign = 'start';
@@ -1029,12 +1040,6 @@ function draw() {
   }
   if (settingsOpen) drawSettings();
   if (isTouch && !game.menu && !game.over && !showInv && !settingsOpen && !mergeOpen) drawTouchUI();
-  if (isTouch && window.innerHeight > window.innerWidth) {
-    ctx.fillStyle = 'rgba(0,0,0,.82)'; ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = '#e8eef6'; ctx.textAlign = 'center'; ctx.font = 'bold 24px sans-serif';
-    ctx.fillText('↻  Rotate your phone', W / 2, H / 2 - 6);
-    ctx.fillStyle = '#9aa0a8'; ctx.font = '15px sans-serif'; ctx.fillText('Play in landscape (sideways)', W / 2, H / 2 + 22); ctx.textAlign = 'start';
-  }
 }
 
 // Draws the on-screen touch controls: joystick, attack, spells, potions, inventory, settings.
@@ -1053,11 +1058,12 @@ function drawTouchUI() {
     if (sub) { ctx.fillStyle = '#9aa0a8'; ctx.font = '10px sans-serif'; ctx.fillText(sub, x, y + r * 0.85); }
     ctx.textAlign = 'start';
   }
-  roundBtn(835, 466, 46, '⚔', '#ff8a5c');
-  roundBtn(690, 372, 22, 'H', '#e2647a', player.potions + '/' + POTION_CAP);
-  roundBtn(752, 372, 22, 'M', '#5a8fe2', player.manaPotions + '/' + MANA_POTION_CAP);
-  roundBtn(866, 150, 22, 'I', '#cfd4dc');
-  roundBtn(866, 100, 22, '⚙', '#cfd4dc');
+  const B = {}; for (const b of touchButtons()) B[b.id] = b;
+  roundBtn(B.attack.x, B.attack.y, B.attack.r, '⚔', '#ff8a5c');
+  roundBtn(B.potionH.x, B.potionH.y, B.potionH.r, 'H', '#e2647a', player.potions + '/' + POTION_CAP);
+  roundBtn(B.potionM.x, B.potionM.y, B.potionM.r, 'M', '#5a8fe2', player.manaPotions + '/' + MANA_POTION_CAP);
+  roundBtn(B.inv.x, B.inv.y, B.inv.r, 'I', '#cfd4dc');
+  roundBtn(B.settings.x, B.settings.y, B.settings.r, '⚙', '#cfd4dc');
   for (let i = 0; i < 4; i++) {
     const b = spellBtn(i), inst = player.spells[i];
     ctx.fillStyle = 'rgba(14,17,22,.72)'; ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill();
@@ -1190,8 +1196,11 @@ function drawInventory() {
   ctx.strokeStyle = '#ffcf5c'; ctx.lineWidth = 2; ctx.strokeRect(fb.x, fb.y, fb.w, fb.h);
   ctx.fillStyle = '#ffcf5c'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('⚒  Forge', fb.x + fb.w / 2, fb.y + 24); ctx.textAlign = 'left';
 
-  const colW = pw / 2 - 30, leftX = px + 20, rightX = px + pw / 2 + 10;
+  const narrow = W < 700; // portrait: stack the two sections instead of side-by-side
+  const colW = narrow ? pw - 40 : pw / 2 - 30;
+  const leftX = px + 20, rightX = narrow ? px + 20 : px + pw / 2 + 10;
   const rowH = 40, top = py + 84;
+  const bagTop = narrow ? top + 14 + SLOTS.length * rowH + 26 : top;
 
   function drawRow(x, yy, it, slotLabel, kind, ref) {
     invRects.push({ x, y: yy, w: colW, h: rowH - 6, kind, ref });
@@ -1212,19 +1221,19 @@ function drawInventory() {
   let yy = top + 14;
   for (const slot of SLOTS) { drawRow(leftX, yy, player.equipped[slot], slot, 'slot', slot); yy += rowH; }
 
-  // Backpack (right column) — scrollable (newest first)
+  // Backpack — scrollable (newest first)
   const fullList = player.inventory.slice().reverse();
   const total = fullList.length;
-  let by = top + 14;
+  let by = bagTop + 14;
   const maxRows = Math.max(1, Math.floor((py + ph - by - 20) / rowH));
   invMaxRows = maxRows;
   const maxScroll = Math.max(0, total - maxRows);
   invScroll = clamp(invScroll, 0, maxScroll);
-  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 15px sans-serif'; ctx.fillText(`Backpack (${total})`, rightX, top);
+  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 15px sans-serif'; ctx.fillText(`Backpack (${total})`, rightX, bagTop);
 
   if (total > maxRows) {
-    const suBtn = { x: rightX + colW - 76, y: top - 18, w: 34, h: 24, kind: 'scrollUp' };
-    const sdBtn = { x: rightX + colW - 38, y: top - 18, w: 34, h: 24, kind: 'scrollDown' };
+    const suBtn = { x: rightX + colW - 76, y: bagTop - 18, w: 34, h: 24, kind: 'scrollUp' };
+    const sdBtn = { x: rightX + colW - 38, y: bagTop - 18, w: 34, h: 24, kind: 'scrollDown' };
     for (const b of [suBtn, sdBtn]) {
       invRects.push(b);
       ctx.fillStyle = '#171a21'; ctx.fillRect(b.x, b.y, b.w, b.h);
@@ -1241,7 +1250,7 @@ function drawInventory() {
   if (total > maxRows) {
     ctx.fillStyle = '#6b7280'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
     ctx.fillText(`${invScroll + 1}–${invScroll + visible.length} of ${total}  ·  scroll ▲▼ / wheel`, rightX + colW, py + ph - 8); ctx.textAlign = 'left';
-    const trX = rightX + colW - 4, trY = top + 14, trH = maxRows * rowH - 8;
+    const trX = rightX + colW - 4, trY = bagTop + 14, trH = maxRows * rowH - 8;
     ctx.fillStyle = '#23272f'; ctx.fillRect(trX, trY, 4, trH);
     const thumbH = Math.max(18, trH * (maxRows / total));
     const thumbY = trY + (trH - thumbH) * (maxScroll ? invScroll / maxScroll : 0);
@@ -1268,9 +1277,11 @@ function drawMerge() {
   ctx.strokeStyle = '#7a4b5c'; ctx.lineWidth = 2; ctx.strokeRect(cb.x, cb.y, cb.w, cb.h);
   ctx.fillStyle = '#ff9a9a'; ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('✕', cb.x + cb.w / 2, cb.y + cb.h / 2 + 8); ctx.textAlign = 'left';
 
-  const colW = pw / 2 - 30, leftX = px + 20, rightX = px + pw / 2 + 10, top = py + 84;
+  const narrow = W < 700; // portrait: stack sections
+  const colW = narrow ? pw - 40 : pw / 2 - 30;
+  const leftX = px + 20, rightX = narrow ? px + 20 : px + pw / 2 + 10, top = py + 84;
 
-  // ---- LEFT: the three forge slots + result preview + FORGE button ----
+  // ---- the three forge slots + result preview + FORGE button ----
   const locked = mergeLockedRarity(), lockedType = mergeLockedType();
   ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 15px sans-serif';
   ctx.fillText(locked ? `Slots — ${locked.name} ${lockedType}` : 'Slots — tap items on the right', leftX, top);
@@ -1315,23 +1326,24 @@ function drawMerge() {
   ctx.fillText(ready ? '⚒  FORGE' : `FORGE  (${mergeCount()}/3)`, fb.x + fb.w / 2, fb.y + 33); ctx.textAlign = 'left';
   if (mergeMsg) { ctx.fillStyle = '#ffe08a'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(mergeMsg, leftX + colW / 2, fb.y + 70); ctx.textAlign = 'left'; }
 
-  // ---- RIGHT: scrollable backpack, grouped so matching sets sit together ----
+  // ---- scrollable backpack, grouped so matching sets sit together ----
   const list = player.inventory.slice().sort((a, b) => {
     const ra = RARITIES.indexOf(b.rarity) - RARITIES.indexOf(a.rarity);
     if (ra !== 0) return ra;
     return itemTypeOf(a).localeCompare(itemTypeOf(b));
   });
+  const bagTop = narrow ? fb.y + fb.h + 40 : top;
   const total = list.length;
-  let by = top + 14;
+  let by = bagTop + 14;
   const rowH = 34;
   const maxRows = Math.max(1, Math.floor((py + ph - by - 20) / rowH));
   mergeMaxRows = maxRows;
   const maxScroll = Math.max(0, total - maxRows);
   mergeScroll = clamp(mergeScroll, 0, maxScroll);
-  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 15px sans-serif'; ctx.fillText(`Backpack (${total})`, rightX, top);
+  ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 15px sans-serif'; ctx.fillText(`Backpack (${total})`, rightX, bagTop);
   if (total > maxRows) {
-    const up = { x: rightX + colW - 76, y: top - 18, w: 34, h: 24, kind: 'scrollUp' };
-    const dn = { x: rightX + colW - 38, y: top - 18, w: 34, h: 24, kind: 'scrollDown' };
+    const up = { x: rightX + colW - 76, y: bagTop - 18, w: 34, h: 24, kind: 'scrollUp' };
+    const dn = { x: rightX + colW - 38, y: bagTop - 18, w: 34, h: 24, kind: 'scrollDown' };
     for (const b of [up, dn]) {
       mergeRects.push(b);
       ctx.fillStyle = '#171a21'; ctx.fillRect(b.x, b.y, b.w, b.h);
@@ -1419,22 +1431,44 @@ function drawMenu() {
   ctx.fillStyle = '#9aa0a8'; ctx.font = '15px sans-serif'; ctx.fillText('Choose your class', W / 2, 112);
 
   menuRects = [];
-  const cw = 230, ch = 290, gap = 26;
-  const total = CLASSES.length * cw + (CLASSES.length - 1) * gap;
-  const x0 = (W - total) / 2, y0 = 150;
-  CLASSES.forEach((c, i) => {
-    const x = x0 + i * (cw + gap);
-    menuRects.push({ x, y: y0, w: cw, h: ch, cls: c });
-    const hover = mouse.x >= x && mouse.x <= x + cw && mouse.y >= y0 && mouse.y <= y0 + ch;
-    ctx.fillStyle = hover ? '#20242e' : '#191c24'; ctx.fillRect(x, y0, cw, ch);
-    ctx.strokeStyle = c.color; ctx.lineWidth = hover ? 3 : 2; ctx.strokeRect(x, y0, cw, ch);
-    ctx.fillStyle = c.color; ctx.beginPath(); ctx.arc(x + cw / 2, y0 + 66, 32, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 22px sans-serif'; ctx.fillText(c.name, x + cw / 2, y0 + 130);
-    ctx.fillStyle = c.color; ctx.font = 'bold 13px sans-serif'; ctx.fillText(`Primary: ${c.primary}`, x + cw / 2, y0 + 154);
-    ctx.fillStyle = '#9aa0a8'; ctx.font = '12px sans-serif'; wrapText(c.desc, x + cw / 2, y0 + 182, cw - 34, 16);
-    ctx.fillStyle = '#6b7280'; ctx.font = '11px sans-serif'; ctx.fillText(`Starts with: ${c.startWeapon}`, x + cw / 2, y0 + ch - 20);
-  });
-  ctx.fillStyle = '#7f8794'; ctx.font = '13px sans-serif'; ctx.fillText('Click a class to begin', W / 2, y0 + ch + 40);
+  const gap = 20;
+  const wide = W >= CLASSES.length * 230 + (CLASSES.length - 1) * gap + 40;
+  if (wide) {
+    // Landscape / desktop: three cards side by side
+    const cw = 230, ch = 290, total = CLASSES.length * cw + (CLASSES.length - 1) * gap;
+    const x0 = (W - total) / 2, y0 = 150;
+    CLASSES.forEach((c, i) => {
+      const x = x0 + i * (cw + gap);
+      menuRects.push({ x, y: y0, w: cw, h: ch, cls: c });
+      const hover = mouse.x >= x && mouse.x <= x + cw && mouse.y >= y0 && mouse.y <= y0 + ch;
+      ctx.fillStyle = hover ? '#20242e' : '#191c24'; ctx.fillRect(x, y0, cw, ch);
+      ctx.strokeStyle = c.color; ctx.lineWidth = hover ? 3 : 2; ctx.strokeRect(x, y0, cw, ch);
+      ctx.fillStyle = c.color; ctx.beginPath(); ctx.arc(x + cw / 2, y0 + 66, 32, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 22px sans-serif'; ctx.fillText(c.name, x + cw / 2, y0 + 130);
+      ctx.fillStyle = c.color; ctx.font = 'bold 13px sans-serif'; ctx.fillText(`Primary: ${c.primary}`, x + cw / 2, y0 + 154);
+      ctx.fillStyle = '#9aa0a8'; ctx.font = '12px sans-serif'; wrapText(c.desc, x + cw / 2, y0 + 182, cw - 34, 16);
+      ctx.fillStyle = '#6b7280'; ctx.font = '11px sans-serif'; ctx.fillText(`Starts with: ${c.startWeapon}`, x + cw / 2, y0 + ch - 20);
+    });
+    ctx.fillStyle = '#7f8794'; ctx.font = '13px sans-serif'; ctx.fillText('Click a class to begin', W / 2, y0 + ch + 40);
+  } else {
+    // Portrait: stacked rows
+    const cw = W - 60, ch = 132, x = 30;
+    const y0 = Math.max(150, (H - (CLASSES.length * (ch + gap) - gap)) / 2);
+    CLASSES.forEach((c, i) => {
+      const y = y0 + i * (ch + gap);
+      menuRects.push({ x, y, w: cw, h: ch, cls: c });
+      const hover = mouse.x >= x && mouse.x <= x + cw && mouse.y >= y && mouse.y <= y + ch;
+      ctx.fillStyle = hover ? '#20242e' : '#191c24'; ctx.fillRect(x, y, cw, ch);
+      ctx.strokeStyle = c.color; ctx.lineWidth = hover ? 3 : 2; ctx.strokeRect(x, y, cw, ch);
+      ctx.fillStyle = c.color; ctx.beginPath(); ctx.arc(x + 54, y + ch / 2, 30, 0, Math.PI * 2); ctx.fill();
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#e8eef6'; ctx.font = 'bold 21px sans-serif'; ctx.fillText(c.name, x + 100, y + 34);
+      ctx.fillStyle = c.color; ctx.font = 'bold 12px sans-serif'; ctx.fillText(`Primary: ${c.primary}  ·  ${c.startWeapon}`, x + 100, y + 54);
+      ctx.fillStyle = '#9aa0a8'; ctx.font = '12px sans-serif'; wrapText(c.desc, x + 100, y + 76, cw - 120, 15);
+      ctx.textAlign = 'center';
+    });
+    ctx.fillStyle = '#7f8794'; ctx.font = '13px sans-serif'; ctx.fillText('Tap a class to begin', W / 2, y0 + CLASSES.length * (ch + gap) + 16);
+  }
   ctx.textAlign = 'start';
 }
 function handleMenuClick() {
